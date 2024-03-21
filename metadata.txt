@@ -1,0 +1,61 @@
+# This file contains metadata for your plugin.
+
+# This file should be included when you package your plugin.# Mandatory items:
+
+[general]
+name=Geodata to ENVI-met
+qgisMinimumVersion=3.0
+description=This plugin lets you export ENVI-met model areas from geodata, run microclimate simulations from QGIS and also enables you to visualize climate model results in QGIS
+version=2.7
+author=Helge Simon
+email=helge.simon@envi-met.com
+
+about=ENVI-met is a three-dimensional microclimate model designed to simulate the building-surface-plant-air interactions in urban environment
+      Typical areas of application are Architecture, Landscape Architecture, Building Design or Environmental Planing, Science and many more...
+      <br>ENVI-met is a prognostic model based on the fundamental laws of fluid dynamics and thermodynamics. The model includes the simulation of:
+      <ul>
+      <li>Flow around and between buildings
+      <li>Exchange processes at the ground surface and at building walls
+      <li>Building physics
+      <li>Impact of vegetation of the local microclimate
+      <li>Bioclimatology
+      <li>Pollutant dispersion
+      </ul>
+      With ENVI-met, you will be able to simulate the urban microclimate as an interactive system consisting of dozens of dynamic subsystems ranging from atmospheric dynamics, over soil physics, vegetation response down to building indoor climate.
+
+      <br>For the official documentation and tutorials, please see the website at <a href="https://envi-met.info/doku.php?id=apps:gis4envi-met">https://envi-met.info</a>.
+      <br>Download a copy of ENVI-met at <a href="https:www.envi-met.com">www.envi-met.com</a>.
+
+tracker=https://github.com/ENVI-met/geodata2ENVI-met/issues
+repository=https://github.com/ENVI-met/geodata2ENVI-met
+# End of mandatory metadata
+
+# Recommended items:
+
+hasProcessingProvider=no
+# Uncomment the following line and add your changelog:
+changelog= added the possibility to run microclimate simulations from QGIS and also visualize model results in QGIS
+
+# Tags are comma separated with spaces allowed
+tags=python, ENVI-met, climate, microclimate, simulation, environment, modelling, urban climate
+
+homepage=http://www.envi-met.com
+category=Plugins
+icon=icon.png
+# experimental flag
+experimental=False
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Since QGIS 3.8, a comma separated list of plugins to be installed
+# (or upgraded) can be specified.
+# Check the documentation for more information.
+# plugin_dependencies=
+
+Category of the plugin: Raster, Vector, Database or Web
+# category=
+
+# If the plugin can run on QGIS Server.
+server=False
+

@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="envilogo">
+    <file>ENVI_met_button_envimetdark.png</file>
+  </qresource>
+</RCC>

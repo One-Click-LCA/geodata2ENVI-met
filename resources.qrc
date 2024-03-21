@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/plugins/geodata2ENVImet">
+    <file>icon.png</file>
+  </qresource>
+</RCC>
