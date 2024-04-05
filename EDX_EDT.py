@@ -191,11 +191,18 @@ class EDT:
         found = False
         i = 0
         for var in self.associated_edx.name_variables:
-            if var == var_name:
-                found = True
-                break
+            if var_name == " Objects ( )":                               # Objects are special -> older versions of ENVI-met / BIO-met were not using the same exact string for "Objects"...
+                if "Objects" in var:
+                    found = True
+                    break
+                else:
+                    i += 1
             else:
-                i += 1
+                if var == var_name:
+                    found = True
+                    break
+                else:
+                    i += 1
         #print(i)
         offset = i * (self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.nr_zdata
                       * self.associated_edx.data_per_variable)
