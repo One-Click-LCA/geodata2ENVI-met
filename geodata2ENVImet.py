@@ -4,7 +4,7 @@ from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QVariant,
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QProgressBar
 from qgis.core import QgsProject, Qgis, QgsField, QgsMapLayerProxyModel, QgsPoint, QgsVectorLayer, QgsRectangle, \
-    QgsFeatureRequest, QgsFieldProxyModel, QgsMessageLog, QgsRasterLayer
+    QgsFeatureRequest, QgsFieldProxyModel, QgsMessageLog, QgsRasterLayer, QgsSettings
 from qgis.PyQt.QtCore import *
 
 # Initialize Qt resources from file resources.py
@@ -38,16 +38,22 @@ class Geo2ENVImet:
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
         # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
-        locale_path = os.path.join(
-            self.plugin_dir,
-            'i18n',
-            'Geo2ENVImet_{}.qm'.format(locale))
+        try:
+            locale = QgsSettings().value("locale/userLocale")
+            if not locale:
+                locale = QLocale().name()
+            locale = locale[0:2]
 
-        if os.path.exists(locale_path):
-            self.translator = QTranslator()
-            self.translator.load(locale_path)
-            QCoreApplication.installTranslator(self.translator)
+            locale_path = os.path.join(self.plugin_dir, "i18n", "Geo2ENVImet_{}.qm".format(locale))
+
+            if os.path.exists(locale_path):
+                self.translator = QTranslator()
+                self.translator.load(locale_path)
+
+                if qVersion() > "4.3.3":
+                    QCoreApplication.installTranslator(self.translator)
+        except TypeError:
+            pass
 
         # Declare instance attributes
         self.actions = []
