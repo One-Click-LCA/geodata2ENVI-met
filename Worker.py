@@ -3007,7 +3007,7 @@ class Worker(QThread):
                     extent.setYMinimum(edx.location_georef_y)
                     extent.setXMaximum(edx.location_georef_x + cols * edx.spacing_x[0])
                     extent.setYMaximum(edx.location_georef_y + rows * edx.spacing_y[0])
-                    if edx.location_georef_y >= 0:
+                    if edx.location_georef_lat >= 0:
                         crs = pyproj.CRS.from_string(f'+proj=utm +zone={edx.location_georef_xy_utmzone} +north')
                     else:
                         crs = pyproj.CRS.from_string(f'+proj=utm +zone={edx.location_georef_xy_utmzone} +south')
@@ -3215,9 +3215,12 @@ class Worker(QThread):
                         cut_extent.setXMaximum(x_list[-1] + cut_margin)
                         cut_extent.setYMaximum(y_list[-1] + cut_margin)
 
-                        center_point_x = edx.location_georef_x + R1_new[0] - edx.spacing_x[0]
-                        center_point_y = edx.location_georef_y + R1_new[1]
-
+                        if edx.location_georef_lat >= 0:
+                            center_point_x = edx.location_georef_x + R1_new[0] - edx.spacing_x[0]
+                            center_point_y = edx.location_georef_y + R1_new[1]
+                        else:
+                            center_point_x = edx.location_georef_x
+                            center_point_y = edx.location_georef_y + rows * edx.spacing_y[0]
 
                         extent = QgsRectangle()
                         extent.setXMinimum(center_point_x - max_dist * edx.spacing_x[0] - margin)
@@ -3227,7 +3230,7 @@ class Worker(QThread):
                         if edx.location_georef_xy_utmzone == 0:
                             crs = pyproj.CRS.from_string(f'+proj=utm +zone=1 +north')                            
                         else:
-                            if edx.location_georef_y >= 0:
+                            if edx.location_georef_lat >= 0:
                                 crs = pyproj.CRS.from_string(f'+proj=utm +zone={edx.location_georef_xy_utmzone} +north')
                             else:
                                 crs = pyproj.CRS.from_string(f'+proj=utm +zone={edx.location_georef_xy_utmzone} +south')
