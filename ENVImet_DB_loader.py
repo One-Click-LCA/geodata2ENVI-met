@@ -16,8 +16,10 @@ class EnviProjects:
         self.userpathmode = 0
         self.projects = []
         self.usersettings = os.getenv('APPDATA').replace('\\', '/') + '/ENVI-met/usersettings.setx'
+        #print(self.usersettings)
         if os.path.exists(self.usersettings):
             self.usersettingsFound = True
+            #print(self.usersettingsFound)
             self.load_usersettings()
             self.sysDB_path = self.userpathinfo.rsplit('/', 1)[0] + '/sys.basedata/database.edb'
             self.userDB_path = self.userpathinfo + '/userdatabase.edb'
@@ -30,14 +32,16 @@ class EnviProjects:
         settings = open(self.usersettings, 'br')
         for row in settings:
             row = row.decode('ansi')
+            #print(row)
             if '<absolute_path>' in row:
-                self.workspace = row.split(">", 1)[1].split("<", 1)[0].replace(' ', '').replace('\\', '/')
+                self.workspace = row.split(">", 1)[1].split("<", 1)[0].replace('\\', '/').strip()
+                #print(self.workspace)
             if '<selectedPython>' in row:
-                self.selectedPython = row.split(">", 1)[1].split("<", 1)[0].replace(' ', '').replace('\\', '/')
+                self.selectedPython = row.split(">", 1)[1].split("<", 1)[0].replace('\\', '/').strip()
             if ('<userpathinfo>' in row) and ('</userpathinfo>' in row):
-                self.userpathinfo = row.split(">", 1)[1].split("<", 1)[0].replace(' ', '').replace('\\', '/')
+                self.userpathinfo = row.split(">", 1)[1].split("<", 1)[0].replace('\\', '/').strip()
             if '<userpathmode>' in row:
-                self.userpathmode = int(row.split(">", 1)[1].split("<", 1)[0].replace(' ', ''))
+                self.userpathmode = int(row.split(">", 1)[1].split("<", 1)[0].strip())
         if not self.userpathinfo == '':
             self.installPath = self.userpathinfo.replace("sys.userdata", "")
         settings.close()
@@ -57,7 +61,7 @@ class EnviProjects:
                     if '<description>' in row:
                         new_project.description = row.split(">", 1)[1].split("<", 1)[0]
                     if '<useProjectDB>' in row:
-                        new_project.useProjectDB = bool(row.split(">", 1)[1].split("<", 1)[0].replace(' ', ''))
+                        new_project.useProjectDB = bool(row.split(">", 1)[1].split("<", 1)[0].strip())
                 #if new_project.useProjectDB and os.path.exists(new_project.projectPath + '/projectdatabase.edb'):
                 #    new_project.DB = ENVImetDB(filepath=self.sysDB_path, use_project_db=True, filepath_project_db=new_project.projectPath + '/projectdatabase.edb')
                 #else:
@@ -148,35 +152,35 @@ class ENVImetDB:
                 count += 1
                 while "</SOIL>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        soil.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        soil.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Description>" in database[row + count]:
                         soil.Description = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<versiegelung>" in database[row + count]:
-                        soil.versiegelung = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.versiegelung = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<ns>" in database[row + count]:
-                        soil.ns = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.ns = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<nfc>" in database[row + count]:
-                        soil.nfc = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.nfc = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<nwilt>" in database[row + count]:
-                        soil.nwilt = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.nwilt = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<matpot>" in database[row + count]:
-                        soil.matpot = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.matpot = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<hydro_lf>" in database[row + count]:
-                        soil.hydro_lf = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.hydro_lf = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<volumenw>" in database[row + count]:
-                        soil.volumenw = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.volumenw = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<b>" in database[row + count]:
-                        soil.b = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.b = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<waerme_lf>" in database[row + count]:
-                        soil.waerme_lf = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.waerme_lf = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
                         soil.Group = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Color>" in database[row + count]:
-                        soil.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<AddValue1>" in database[row + count]:
-                        soil.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<AddValue2>" in database[row + count]:
-                        soil.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        soil.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     count += 1
 
                 self.soil_dict[soil.ID] = soil
@@ -187,27 +191,27 @@ class ENVImetDB:
                 count += 1
                 while "</PROFILE>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        profile.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        profile.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Description>" in database[row + count]:
                         profile.Description = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<z0_Length>" in database[row + count]:
-                        profile.z0_length = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        profile.z0_length = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<soilprofil>" in database[row + count]:
-                        profile.soilprofil = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")
+                        profile.soilprofil = database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")
                     elif "<Albedo>" in database[row + count]:
-                        profile.Emissivitaet = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        profile.Emissivitaet = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Emissivität>" in database[row + count]:
-                        profile.Emissivitaet = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        profile.Emissivitaet = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Irrigated>" in database[row + count]:
-                        profile.Irrigated = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        profile.Irrigated = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Color>" in database[row + count]:
-                        profile.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        profile.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
                         profile.Group = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<AddValue1>" in database[row + count]:
-                        profile.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        profile.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<AddValue2>" in database[row + count]:
-                        profile.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        profile.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     count += 1
 
                 self.profile_dict[profile.ID] = profile
@@ -218,31 +222,31 @@ class ENVImetDB:
                 count += 1
                 while "</MATERIAL>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        material.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        material.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Description>" in database[row + count]:
                         material.Description = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<DefaultThickness>" in database[row + count]:
-                        material.DefaultThickness = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.DefaultThickness = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Absorption>" in database[row + count]:
-                        material.Absorption = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.Absorption = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Transmission>" in database[row + count]:
-                        material.Transmission = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.Transmission = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Reflection>" in database[row + count]:
-                        material.Reflection = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.Reflection = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Emissivity>" in database[row + count]:
-                        material.Emissivity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.Emissivity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SpecificHeat>" in database[row + count]:
-                        material.SpecificHeat = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.SpecificHeat = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<ThermalConductivity>" in database[row + count]:
-                        material.ThermalConductivity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.ThermalConductivity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Density>" in database[row + count]:
-                        material.Density = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.Density = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<ExtraID>" in database[row + count]:
-                        material.ExtraID = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.ExtraID = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Color>" in database[row + count]:
-                        material.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        material.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
-                        material.Group = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        material.Group = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     count += 1
 
                 self.material_dict[material.ID] = material
@@ -253,27 +257,27 @@ class ENVImetDB:
                 count += 1
                 while "</WALL>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        wall.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        wall.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Description>" in database[row + count]:
                         wall.Description = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Materials>" in database[row + count]:
-                        wall.Materials = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")
+                        wall.Materials = database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")
                     elif "<ThicknessLayers>" in database[row + count]:
-                        wall.ThicknessLayers = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        wall.ThicknessLayers = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<TypeID>" in database[row + count]:
-                        wall.TypeID = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.TypeID = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<RoughnessLength>" in database[row + count]:
-                        wall.RoughnessLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.RoughnessLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<CanBeGreened>" in database[row + count]:
-                        wall.CanBeGreened = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.CanBeGreened = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Color>" in database[row + count]:
-                        wall.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
-                        wall.Group = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        wall.Group = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<AddValue1>" in database[row + count]:
-                        wall.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<AddValue2>" in database[row + count]:
-                        wall.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     count += 1
 
                 self.wall_dict[wall.ID] = wall
@@ -284,35 +288,35 @@ class ENVImetDB:
                 count += 1
                 while "</PLANT>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        plant.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        plant.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Description>" in database[row + count]:
                         plant.Description = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<AlternativeName>" in database[row + count]:
                         plant.AlternativeName = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Planttype>" in database[row + count]:
-                        plant.Planttype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Planttype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Leaftype>" in database[row + count]:
-                        plant.Leaftype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Leaftype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Albedo>" in database[row + count]:
-                        plant.Albedo = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Albedo = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Transmittance>" in database[row + count]:
-                        plant.Transmittance = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Transmittance = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<rs_min>" in database[row + count]:
-                        plant.rs_min = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.rs_min = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Height>" in database[row + count]:
-                        plant.Height = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Height = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Depth>" in database[row + count]:
-                        plant.Depth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Depth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LAD-Profile>" in database[row + count]:
-                        plant.LAD_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        plant.LAD_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<RAD-Profile>" in database[row + count]:
-                        plant.RAD_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        plant.RAD_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Season-Profile>" in database[row + count]:
-                        plant.Season_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        plant.Season_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Group>" in database[row + count]:
                         plant.Group = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Color>" in database[row + count]:
-                        plant.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     count += 1
 
                 self.plant_dict[plant.ID] = plant
@@ -323,17 +327,17 @@ class ENVImetDB:
                 count += 1
                 while "</SINGLEWALL>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        wall.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        wall.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Name>" in database[row + count]:
                         wall.Name = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Material>" in database[row + count]:
-                        wall.Material = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        wall.Material = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<RoughnessLength>" in database[row + count]:
-                        wall.RoughnessLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.RoughnessLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Thickness>" in database[row + count]:
-                        wall.Thickness = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.Thickness = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Color>" in database[row + count]:
-                        wall.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        wall.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
                         wall.Group = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     count += 1
@@ -345,31 +349,31 @@ class ENVImetDB:
                 count += 1
                 while "</SOURCE>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        source.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        source.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Description>" in database[row + count]:
                         source.Description = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Color>" in database[row + count]:
-                        source.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        source.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
                         source.Group = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<DefaultHeight>" in database[row + count]:
-                        source.DefaultHeight = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        source.DefaultHeight = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Sourcetype>" in database[row + count]:
-                        source.Sourcetype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        source.Sourcetype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SpecialID>" in database[row + count]:
-                        source.SpecialID = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        source.SpecialID = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Emissionprofile_User>" in database[row + count]:
-                        source.Emissionprofile_User = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        source.Emissionprofile_User = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Emissionprofile_NO>" in database[row + count]:
-                        source.Emissionprofile_NO = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        source.Emissionprofile_NO = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Emissionprofile_NO2>" in database[row + count]:
-                        source.Emissionprofile_NO2 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        source.Emissionprofile_NO2 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Emissionprofile_O3>" in database[row + count]:
-                        source.Emissionprofile_O3 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        source.Emissionprofile_O3 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Emissionprofile_PM10>" in database[row + count]:
-                        source.Emissionprofile_PM10 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        source.Emissionprofile_PM10 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Emissionprofile_PM25>" in database[row + count]:
-                        source.Emissionprofile_PM25 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        source.Emissionprofile_PM25 = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     count += 1
                 self.sources_dict[source.ID] = source
 
@@ -379,39 +383,39 @@ class ENVImetDB:
                 count += 1
                 while "</GREENING>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        greening.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        greening.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Name>" in database[row + count]:
                         greening.Name = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<HasSubstrate>" in database[row + count]:
-                        greening.HasSubstrate = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.HasSubstrate = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SoilID>" in database[row + count]:
-                        greening.SoilID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")
+                        greening.SoilID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")
                     elif "<ThicknessLayers>" in database[row + count]:
-                        greening.ThicknessLayers = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        greening.ThicknessLayers = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<subEmissivity>" in database[row + count]:
-                        greening.subEmissivity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.subEmissivity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<subAlbedo>" in database[row + count]:
-                        greening.subAlbedo = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.subAlbedo = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<subWaterCoeff>" in database[row + count]:
-                        greening.subWaterCoeff = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.subWaterCoeff = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SimplePlantID>" in database[row + count]:
-                        greening.SimplePlantID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        greening.SimplePlantID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<LAI>" in database[row + count]:
-                        greening.LAI = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.LAI = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SimplePlantThickness>" in database[row + count]:
-                        greening.SimplePlantThickness = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.SimplePlantThickness = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafAngleDistribution>" in database[row + count]:
-                        greening.LeafAngleDistribution = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.LeafAngleDistribution = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<AirGap>" in database[row + count]:
-                        greening.AirGap = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.AirGap = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Color>" in database[row + count]:
-                        greening.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
                         greening.Group = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<AddValue1>" in database[row + count]:
-                        greening.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.AddValue1 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<AddValue2>" in database[row + count]:
-                        greening.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        greening.AddValue2 = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     count += 1
 
                 self.greening_dict[greening.ID] = greening
@@ -422,127 +426,127 @@ class ENVImetDB:
                 count += 1
                 while "</PLANT3D>" not in database[row + count]:
                     if "<ID>" in database[row + count]:
-                        plant.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "")
+                        plant.ID = database[row + count].split(">", 1)[1].split("<", 1)[0].strip()
                     elif "<Description>" in database[row + count]:
                         plant.Description = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<AlternativeName>" in database[row + count]:
                         plant.AlternativeName = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Planttype>" in database[row + count]:
-                        plant.Planttype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Planttype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Leaftype>" in database[row + count]:
-                        plant.Leaftype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Leaftype = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Albedo>" in database[row + count]:
-                        plant.Albedo = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Albedo = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Transmittance>" in database[row + count]:
-                        plant.Transmittance = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Transmittance = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<isoprene>" in database[row + count]:
-                        plant.isoprene = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.isoprene = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<leafweigth>" in database[row + count]:
-                        plant.leafweigth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.leafweigth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<rs_min>" in database[row + count]:
-                        plant.rs_min = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.rs_min = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Height>" in database[row + count]:
-                        plant.Height = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Height = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Width>" in database[row + count]:
-                        plant.Width = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Width = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Depth>" in database[row + count]:
-                        plant.Depth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Depth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<RootDiameter>" in database[row + count]:
-                        plant.RootDiameter = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.RootDiameter = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<cellsize>" in database[row + count]:
-                        plant.cellsize = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.cellsize = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<xy_cells>" in database[row + count]:
-                        plant.xy_cells = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.xy_cells = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<z_cells>" in database[row + count]:
-                        plant.z_cells = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.z_cells = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LAD-Profile" in database[row + count]:
                         count += 1
                         while "</LAD-Profile>" not in database[row + count]:
-                            tmp = database[row + count].replace(" ", "").split(",")
+                            tmp = database[row + count].strip().split(",")
                             plant.LAD_Profile.append((int(tmp[0]), int(tmp[1]), int(tmp[2]), float(tmp[3])))
                             count += 1
 
                         plant.convert_lad_profile_to_numpy()
                     elif "<RAD-Profile>" in database[row + count]:
-                        plant.RAD_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        plant.RAD_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Root-Range-Profile>" in database[row + count]:
-                        plant.Root_Range_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        plant.Root_Range_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<Season-Profile>" in database[row + count]:
-                        plant.Season_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                        plant.Season_Profile = [float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(",")]
                     elif "<DensityWood>" in database[row + count]:
-                        plant.DensityWood = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.DensityWood = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<YoungsModulus>" in database[row + count]:
-                        plant.YoungsModulus = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.YoungsModulus = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<YoungRatioRtoL>" in database[row + count]:
-                        plant.YoungRatioRtoL = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.YoungRatioRtoL = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<MORBranch>" in database[row + count]:
-                        plant.MORBranch = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.MORBranch = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<MORConnection>" in database[row + count]:
-                        plant.MORConnection = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.MORConnection = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<PlantGroup>" in database[row + count]:
-                        plant.PlantGroup = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.PlantGroup = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Color>" in database[row + count]:
-                        plant.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.Color = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Group>" in database[row + count]:
                         plant.Group = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<ColorStem>" in database[row + count]:
-                        plant.ColorStem = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.ColorStem = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<ColorBlossom>" in database[row + count]:
-                        plant.ColorBlossom = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.ColorBlossom = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<L-SystemBased>" in database[row + count]:
-                        plant.L_SystemBased = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.L_SystemBased = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Axiom>" in database[row + count]:
                         plant.Axiom = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<IterationDepth>" in database[row + count]:
-                        plant.IterationDepth = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.IterationDepth = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<hasUserEdits>" in database[row + count]:
-                        plant.hasUserEdits = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.hasUserEdits = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LADMatrix_generated>" in database[row + count]:
-                        plant.LADMatrix_generated = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LADMatrix_generated = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<InitialSegmentLength>" in database[row + count]:
-                        plant.InitialSegmentLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.InitialSegmentLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SmallSegmentLength>" in database[row + count]:
-                        plant.SmallSegmentLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.SmallSegmentLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<ChangeSegmentLength>" in database[row + count]:
-                        plant.ChangeSegmentLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.ChangeSegmentLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SegmentResolution>" in database[row + count]:
-                        plant.SegmentResolution = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.SegmentResolution = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<TurtleAngle>" in database[row + count]:
-                        plant.TurtleAngle = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.TurtleAngle = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<RadiusOuterBranch>" in database[row + count]:
-                        plant.RadiusOuterBranch = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.RadiusOuterBranch = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<PipeFactor>" in database[row + count]:
-                        plant.PipeFactor = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.PipeFactor = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafPosition>" in database[row + count]:
-                        plant.LeafPosition = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafPosition = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafsPerNode>" in database[row + count]:
-                        plant.LeafsPerNode = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafsPerNode = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafInternodeLength>" in database[row + count]:
-                        plant.LeafInternodeLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafInternodeLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafMinSegmentOrder>" in database[row + count]:
-                        plant.LeafMinSegmentOrder = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafMinSegmentOrder = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafWidth>" in database[row + count]:
-                        plant.LeafWidth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafWidth = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafLength>" in database[row + count]:
-                        plant.LeafLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafSurface>" in database[row + count]:
-                        plant.LeafSurface = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafSurface = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<PetioleAngle>" in database[row + count]:
-                        plant.PetioleAngle = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.PetioleAngle = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<PetioleLength>" in database[row + count]:
-                        plant.PetioleLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.PetioleLength = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<LeafRotationalAngle>" in database[row + count]:
-                        plant.LeafRotationalAngle = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.LeafRotationalAngle = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<FactorHorizontal>" in database[row + count]:
-                        plant.FactorHorizontal = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.FactorHorizontal = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<TropismVector>" in database[row + count]:
-                        plant.TropismVector = (float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(","))
+                        plant.TropismVector = (float(i) for i in database[row + count].split(">", 1)[1].split("<", 1)[0].strip().split(","))
                     elif "<TropismElstaicity>" in database[row + count]:
-                        plant.TropismElstaicity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.TropismElstaicity = float(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<SegmentRemovallist>" in database[row + count]:
                         plant.SegmentRemovallist = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<NrRules>" in database[row + count]:
-                        plant.NrRules = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.NrRules = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     elif "<Rules_Variable>" in database[row + count]:
                         plant.Rules_Variable = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<Rules_Replacement>" in database[row + count]:
@@ -556,7 +560,7 @@ class ENVImetDB:
                     elif "<TermLString>" in database[row + count]:
                         plant.TermLString = database[row + count].split(">", 1)[1].split("<", 1)[0]
                     elif "<ApplyTermLString>" in database[row + count]:
-                        plant.ApplyTermLString = int(database[row + count].split(">", 1)[1].split("<", 1)[0].replace(" ", ""))
+                        plant.ApplyTermLString = int(database[row + count].split(">", 1)[1].split("<", 1)[0].strip())
                     count += 1
                 self.plant3d_dict[plant.ID] = plant
         databaseF.close()

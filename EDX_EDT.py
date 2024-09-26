@@ -76,11 +76,11 @@ class EDX:
             if "<nr_zdata>" in row:
                 self.nr_zdata = int(row.split(">", 1)[1].split("<", 1)[0])
             if "<spacing_x>" in row:
-                self.spacing_x = [float(i) for i in row.split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                self.spacing_x = [float(i) for i in row.split(">", 1)[1].split("<", 1)[0].strip().split(",")]
             if "<spacing_y>" in row:
-                self.spacing_y = [float(i) for i in row.split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                self.spacing_y = [float(i) for i in row.split(">", 1)[1].split("<", 1)[0].strip().split(",")]
             if "<spacing_z>" in row:
-                self.spacing_z = [float(i) for i in row.split(">", 1)[1].split("<", 1)[0].replace(" ", "").split(",")]
+                self.spacing_z = [float(i) for i in row.split(">", 1)[1].split("<", 1)[0].strip().split(",")]
             if "<Data_per_variable>" in row:
                 self.data_per_variable = int(row.split(">", 1)[1].split("<", 1)[0])
             if "<nr_variables>" in row:
