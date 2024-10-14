@@ -189,6 +189,8 @@ class SIMX:
 
                 if '<turbulenceModel>' in row:
                     self.Turbulence.turbulenceModel = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                elif '<TKELimit>' in row:
+                    self.Turbulence.TKELimit = int(row.split(">", 1)[1].split("<", 1)[0].strip())                    
             elif section == 'FullForcing':
                 if not self.FuFoSelected:
                     self.FuFoSelected = True
@@ -205,20 +207,10 @@ class SIMX:
                     self.FullForcing.forcePrecip = int(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<forceRadClouds>' in row:
                     self.FullForcing.forceRadClouds = int(row.split(">", 1)[1].split("<", 1)[0].strip())
-                elif '<interpolationMethod>' in row:
-                    self.FullForcing.interpolationMethod = row.split(">", 1)[1].split("<", 1)[0].strip()
                 elif '<nudging>' in row:
                     self.FullForcing.nudging = int(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<nudgingFactor>' in row:
                     self.FullForcing.nudgingFactor = float(row.split(">", 1)[1].split("<", 1)[0].strip())
-                elif '<minFlowsteps>' in row:
-                    self.FullForcing.minFlowsteps = int(row.split(">", 1)[1].split("<", 1)[0].strip())
-                elif '<limitWind2500>' in row:
-                    self.FullForcing.limitWind2500 = int(row.split(">", 1)[1].split("<", 1)[0].strip())
-                elif '<maxWind2500>' in row:
-                    self.FullForcing.maxWind2500 = float(row.split(">", 1)[1].split("<", 1)[0].strip())
-                elif '<z_0>' in row:
-                    self.FullForcing.z_0 = float(row.split(">", 1)[1].split("<", 1)[0].strip())
             elif section == 'SimpleForcing':
                 if not self.SiFoSelected:
                     self.SiFoSelected = True
@@ -286,11 +278,11 @@ class SIMX:
                     self.OutputSettings.writeVegetation = int(row.split(">", 1)[1].split("<", 1)[0].strip())
             elif section == 'Clouds':
                 if '<lowClouds>' in row:
-                    self.Clouds.lowClouds = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                    self.Clouds.lowClouds = round(float(row.split(">", 1)[1].split("<", 1)[0].strip()))
                 elif '<middleClouds>' in row:
-                    self.Clouds.middleClouds = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                    self.Clouds.middleClouds = round(float(row.split(">", 1)[1].split("<", 1)[0].strip()))
                 elif '<highClouds>' in row:
-                    self.Clouds.highClouds = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                    self.Clouds.highClouds = round(float(row.split(">", 1)[1].split("<", 1)[0].strip()))
             elif section == 'Background':
                 if not self.PollutantsSelected:
                     self.PollutantsSelected = True
@@ -346,7 +338,7 @@ class SIMX:
                 elif '<RayTraceStepWidthLowRes>' in row:
                     self.RadScheme.RayTraceStepWidthLowRes = float(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<RadiationHeightBoundary>' in row:
-                    self.RadScheme.RadiationHeightBoundary = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                    self.RadScheme.RadiationHeightBoundary = float(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<MRTCalcMethod>' in row:
                     self.RadScheme.MRTCalcMethod = int(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<MRTProjFac>' in row:
@@ -466,6 +458,7 @@ class SIMX:
             if self.ExpertSelected:
                 print("  <Turbulence>", file=output_file)
                 print(f"     <turbulenceModel> {self.Turbulence.turbulenceModel} </turbulenceModel>", file=output_file)
+                print(f"     <TKELimit> {self.Turbulence.TKELimit} </TKELimit>", file=output_file)
                 print("  </Turbulence>", file=output_file)
             # Simple Forcing
             if self.SiFoSelected:
@@ -482,13 +475,8 @@ class SIMX:
                 print(f"     <forceWind> {self.FullForcing.forceWind} </forceWind>", file=output_file)
                 print(f"     <forcePrecip> {self.FullForcing.forcePrecip} </forcePrecip>", file=output_file)
                 print(f"     <forceRadClouds> {self.FullForcing.forceRadClouds} </forceRadClouds>", file=output_file)
-                print(f"     <interpolationMethod> {self.FullForcing.interpolationMethod} </interpolationMethod>", file=output_file)
                 print(f"     <nudging> {self.FullForcing.nudging} </nudging>", file=output_file)
                 print(f"     <nudgingFactor> {self.FullForcing.nudgingFactor} </nudgingFactor>", file=output_file)
-                print(f"     <minFlowsteps> {self.FullForcing.minFlowsteps} </minFlowsteps>", file=output_file)
-                print(f"     <limitWind2500> {self.FullForcing.limitWind2500} </limitWind2500>", file=output_file)
-                print(f"     <maxWind2500> {self.FullForcing.maxWind2500} </maxWind2500>", file=output_file)
-                print(f"     <z_0> {self.FullForcing.z_0} </z_0>", file=output_file)
                 print("  </FullForcing>", file=output_file)
             # Open / Cyclic
             elif self.otherSelected:
@@ -658,6 +646,7 @@ class simx_Sources:
 class simx_Turbulence:
     def __init__(self):
         self.turbulenceModel = 3
+        self.TKELimit = 1
 
 
 class simx_SimpleForcing:
@@ -736,7 +725,7 @@ class simx_RadScheme:
         self.ViewFacUpdateInterval = 10
         self.RayTraceStepWidthHighRes = 0.25
         self.RayTraceStepWidthLowRes = 0.5
-        self.RadiationHeightBoundary = 10
+        self.RadiationHeightBoundary = 10.0
         self.MRTCalcMethod = 1
         self.MRTProjFac = 2
 
@@ -777,15 +766,10 @@ class simx_LBC:
 class simx_FullForcing:
     def __init__(self):
         self.fileName = ''
-        self.forceQ = 1
         self.forceT = 1
+        self.forceQ = 1
         self.forceWind = 1
         self.forcePrecip = 1
         self.forceRadClouds = 1
-        self.interpolationMethod = 'linear'
         self.nudging = 0
         self.nudgingFactor = 1.0
-        self.minFlowsteps = 50
-        self.limitWind2500 = 0
-        self.maxWind2500 = 999.0
-        self.z_0 = 0.10

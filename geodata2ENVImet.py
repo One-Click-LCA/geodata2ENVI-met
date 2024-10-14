@@ -342,6 +342,9 @@ class Geo2ENVImet:
         else:
             self.worker.dEMBand = self.dlg.cb_demBand.currentBand()
 
+        self.worker.dEMInterpol = self.dlg.cb_demInterpol.currentIndex()
+        #self.worker.dEMInterpol = self.dlg.chk_interpolateDEM.isChecked()
+
     def transfer_3dplant_info_to_worker(self):
         # transfer 3d plant info
         if self.dlg.cb_plant3dLayer.currentLayer() is None:
@@ -530,10 +533,14 @@ class Geo2ENVImet:
             self.worker.dEMLayer = self.dlg.cb_demLayer.currentLayer()
         if not (self.dlg.cb_demBand.currentBand() is None):
             self.worker.dEMBand = self.dlg.cb_demBand.currentBand()
+        
+        self.worker.bTop_UseCustom = self.dlg.chk_bTop.isChecked()
+        self.worker.bTop_custom = self.dlg.se_bTop.value()
 
         self.worker.dx = self.dlg.se_dx.value()
         self.worker.dy = self.dlg.se_dy.value()
         self.worker.dz = self.dlg.se_dz.value()
+        self.worker.msg = ""
 
         # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
         # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
@@ -572,6 +579,7 @@ class Geo2ENVImet:
         self.worker.dx = self.dlg.se_dx.value()
         self.worker.dy = self.dlg.se_dy.value()
         self.worker.dz = self.dlg.se_dz.value()
+        self.worker.msg = ""
 
         # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
         # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
@@ -667,6 +675,8 @@ class Geo2ENVImet:
             "x-Dimension: " + str(self.worker.xMeters) + " m; number of x-Grids: " + str(self.worker.II))
         self.dlg.l_yGrids.setText(
             "y-Dimension: " + str(self.worker.yMeters) + " m; number of y-Grids: " + str(self.worker.JJ))
+        if self.worker.msg != "":
+            self.iface.messageBar().pushMessage(self.worker.msg.split(":")[0], self.worker.msg.split(":")[1], level=Qgis.Warning)
         # enable the gui that triggers the events
         self.set_general_gridding_settings_ui(True)
         self.startWorkerPreviewdz()
@@ -1074,6 +1084,14 @@ class Geo2ENVImet:
         user_name = self.dlg.le_nameLayers.text()
         var_selected = self.dlg.cb_dataLayers.itemText(self.dlg.cb_dataLayers.currentIndex())
         interpolRes_usr = self.dlg.sb_interpolRes.value()
+        sampling_usr = 0        
+        if self.dlg.cb_samplingOut.currentIndex() == 0:
+            sampling_usr = 0
+        if self.dlg.cb_samplingOut.currentIndex() == 1:
+            sampling_usr = 1
+        if self.dlg.cb_samplingOut.currentIndex() == 2:
+            sampling_usr = 3
+
         if user_name == '':
             var_name = var_selected
         else:
@@ -1093,7 +1111,8 @@ class Geo2ENVImet:
                                                                               only_load_data=False,
                                                                               load_and_rotate_data=True,
                                                                               interpolate_data=True,
-                                                                              interpol_res=interpolRes_usr))
+                                                                              interpol_res=interpolRes_usr,
+                                                                              sampling_method=sampling_usr))
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
@@ -1187,7 +1206,6 @@ class Geo2ENVImet:
 
         self.dlg.rb_simpleForcing.clicked.connect(self.select_forcing_mode)
         self.dlg.rb_fullForcing.clicked.connect(self.select_forcing_mode)
-        self.dlg.rb_other.clicked.connect(self.select_forcing_mode)
 
         self.dlg.calendar_startDateSim.selectionChanged.connect(self.update_date)
 
@@ -1507,11 +1525,6 @@ class Geo2ENVImet:
             else:
                 self.dlg.lb_meteorology.setText(self.meteoSettings_states[2])
                 self.dlg.cb_meteo.setCheckState(Qt.Checked)
-        else:
-            # show page for open/cyclic
-            self.dlg.stackedWidget_3.setCurrentIndex(2)
-            self.dlg.lb_meteorology.setText(self.meteoSettings_states[3])
-            self.dlg.cb_meteo.setCheckState(Qt.Checked)
 
     @staticmethod
     def switch_enabled_tab(tab):
@@ -1589,7 +1602,7 @@ class Geo2ENVImet:
         self.dlg.hs_minT.setValue(17)
         self.dlg.hs_maxHum.setValue(75)
         self.dlg.hs_minHum.setValue(45)
-        self.dlg.sb_specHum.setValue(9.00)
+        self.dlg.sb_specHum.setValue(8.00)
         self.update_temp_and_hum_simpleforcing()
 
         self.dlg.sb_windspeed.setValue(1.50)
@@ -1622,19 +1635,6 @@ class Geo2ENVImet:
         self.dlg.stackedWidget_5.setCurrentIndex(1)
         self.dlg.stackedWidget_6.setCurrentIndex(0)
         self.dlg.stackedWidget_7.setCurrentIndex(1)
-
-        # Open/Cyclic
-        self.dlg.sb_otherAirT.setValue(20.00)
-        self.dlg.sb_otherHum.setValue(50.00)
-        self.dlg.sb_otherHum2500.setValue(8.00)
-        self.dlg.sb_otherLowclouds.setValue(0)
-        self.dlg.sb_otherMediumclouds.setValue(0)
-        self.dlg.sb_otherHighclouds.setValue(0)
-        self.dlg.sb_otherWS.setValue(2.00)
-        self.dlg.sb_otherWdir.setValue(135.00)
-        self.dlg.sb_otherRlength.setValue(0.010)
-        self.dlg.cb_otherBChumT.setCurrentIndex(0)
-        self.dlg.cb_otherBCturb.setCurrentIndex(0)
 
         # Soil
         self.dlg.sb_soilHumUpper.setValue(65.00)
@@ -1686,7 +1686,7 @@ class Geo2ENVImet:
         # Plants
         self.dlg.rb_leafTransUserDef.setChecked(True)
         self.dlg.rb_TreeCalYes.setChecked(True)
-        self.dlg.sb_co2.setValue(400)
+        self.dlg.sb_co2.setValue(450)
 
         # Timing
         self.dlg.sb_timingPlant.setValue(600)
@@ -1719,7 +1719,9 @@ class Geo2ENVImet:
         self.dlg.rb_DIN6946.setChecked(True)
         self.dlg.rb_threadingMain.setChecked(True)
         self.dlg.rb_avgInflowNo.setChecked(True)
-        self.dlg.cb_TKE.setCurrentIndex(0)
+        self.dlg.rb_avgInflowNo.setChecked(True)
+        self.dlg.cb_TKE.setCurrentIndex(3)
+        self.dlg.rb_tkeLimitY.setChecked(True)
 
         # trigger update event for meteo-settings
         self.select_forcing_mode()

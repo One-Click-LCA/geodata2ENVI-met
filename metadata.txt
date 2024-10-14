@@ -6,7 +6,7 @@
 name=Geodata to ENVI-met
 qgisMinimumVersion=3.0
 description=This plugin lets you export ENVI-met model areas from geodata, run microclimate simulations from QGIS and also enables you to visualize climate model results in QGIS
-version=2.9.2
+version=3.0
 author=Helge Simon
 email=helge.simon@envi-met.com
 

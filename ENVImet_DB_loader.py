@@ -31,7 +31,7 @@ class EnviProjects:
     def load_usersettings(self):
         settings = open(self.usersettings, 'br')
         for row in settings:
-            row = row.decode('ansi')
+            row = row.decode('cp1252')
             #print(row)
             if '<absolute_path>' in row:
                 self.workspace = row.split(">", 1)[1].split("<", 1)[0].replace('\\', '/').strip()
@@ -55,7 +55,7 @@ class EnviProjects:
                 new_project.projectPath = p
                 info_file = open(p + '/project.infoX', 'br')
                 for row in info_file:
-                    row = row.decode('ansi')
+                    row = row.decode('cp1252')
                     if '<name>' in row:
                         new_project.name = row.split(">", 1)[1].split("<", 1)[0]
                     if '<description>' in row:
@@ -120,7 +120,7 @@ class ENVImetDB:
     def get_np_array(db):
         l = []
         for row in db:
-            row = row.decode('ansi')
+            row = row.decode('cp1252')
             l.append(row)
         return np.asarray(l, dtype=str)
 

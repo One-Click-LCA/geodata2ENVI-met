@@ -58,7 +58,7 @@ class EDX:
     def load_metadata(self):
         file = open(self.edx_file, 'br')
         for row in file:
-            row = row.decode('ansi')
+            row = row.decode('cp1252')
             if "<data_type>" in row:
                 self.data_type = int(row.split(">", 1)[1].split("<", 1)[0])
             if "<data_content>" in row:
