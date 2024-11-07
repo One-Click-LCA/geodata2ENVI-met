@@ -436,15 +436,25 @@ class Worker(QThread):
     def get_time_zone_geonames(self):
         QgsMessageLog.logMessage("Getting Timezone...", 'ENVI-met', level=Qgis.Info)
         try:
-            response = requests.get('http://api.geonames.org/timezone?lat=' + str(self.lat) + '&lng=' + str(self.lon) + '&username=envi_met', timeout=20)
+            url = 'http://api.geonames.org/timezone?lat=' + str(self.lat) + '&lng=' + str(self.lon) + '&username=envi_met'
+            #print(url)
+            response = requests.get(url, timeout=20)
             if response.status_code == 200:
                 s = response.text
-                tree = ET.ElementTree(ET.fromstring(s))
-                root = tree.getroot()
-                for tz in root:
-                    for data in tz:
-                        if data.tag == "gmtOffset":
-                            return data.text
+                #print(s)
+                if "error" not in s:
+                    tree = ET.ElementTree(ET.fromstring(s))
+                    root = tree.getroot()
+                    for tz in root:
+                        for data in tz:
+                            if data.tag == "gmtOffset":
+                                return data.text
+                            else:
+                                s1 = round(self.lat / 15)
+                                return str(s1) 
+                else:
+                    s1 = round(self.lat / 15)
+                    return str(s1)                                                
             else:
                 s = round(self.lat / 15)
                 return str(s)
@@ -1906,9 +1916,23 @@ class Worker(QThread):
         return self.s_recList
     
     def reprojectLayerToUTM(self, aLayer, isSubAreaLayer: bool):
-        proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
-        x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
-        lon, lat = proj.transform(x1, y1)
+        #print(aLayer.crs().authid().split(":")[1])
+        if not(aLayer.crs().authid().split(":")[1] == str(4326)):
+            #print('in_if')
+            proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
+            x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
+            lon, lat = proj.transform(x1, y1)
+        else:
+            for feature in aLayer.getFeatures():
+                geom = feature.geometry()
+                
+                # Calculate the centroid of the polygon
+                centroid = geom.centroid().asPoint()
+                
+                # Extract latitude (y) and longitude (x) from the centroid
+                lon = centroid.x()
+                lat = centroid.y()
+                #print(f"Centroid - Longitude: {lon}, Latitude: {lat}")
         aUTMZone = self.get_UTM_zone(lon, lat)
         #print(aUTMZone)
         auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ',''))
@@ -1928,6 +1952,7 @@ class Worker(QThread):
             'TARGET_CRS': 'EPSG:' + str(auth_id),
             'OUTPUT': 'memory:Reprojected'
         }
+        #print(parameter)
         return processing.run('native:reprojectlayer', parameter, context=context)['OUTPUT']
 
     def reprojectRasterLayerToUTM(self, aLayer):
@@ -2289,6 +2314,7 @@ class Worker(QThread):
             print("    <version>4</version>", file=output_file)
             print("    <revisiondate>  </revisiondate>", file=output_file)
             print("    <remark> model created by QGIS plugin, additional settings: def roof material: " + self.defaultWall + "; def wall material: " + self.defaultRoof + "; clear buildings cells at border: " + str(self.removeBBorder) + "; leveled buildings in DEM: " + str(self.bLeveled) + "; building height not fixed: " + str(self.bNOTFixedH) + "; starting surface: " + self.startSurfID + "; remove veg from buildings: " + str(self.removeVegBuild) + " </remark>", file=output_file)
+            print("    <fileInfo> model created by QGIS plugin </fileInfo>", file=output_file)            
             print("    <encryptionlevel>0</encryptionlevel>", file=output_file)
             print("  </Header>", file=output_file)
             print("  <baseData>", file=output_file)
