@@ -442,24 +442,26 @@ class Worker(QThread):
             if response.status_code == 200:
                 s = response.text
                 #print(s)
+                dataFound = False
                 if "error" not in s:
                     tree = ET.ElementTree(ET.fromstring(s))
                     root = tree.getroot()
                     for tz in root:
                         for data in tz:
                             if data.tag == "gmtOffset":
+                                dataFound = True
                                 return data.text
-                            else:
-                                s1 = round(self.lat / 15)
-                                return str(s1) 
+                    if not dataFound:
+                        s1 = round(self.lon / 15)
+                        return str(s1) 
                 else:
-                    s1 = round(self.lat / 15)
+                    s1 = round(self.lon / 15)
                     return str(s1)                                                
             else:
-                s = round(self.lat / 15)
+                s = round(self.lon / 15)
                 return str(s)
         except:
-            s = round(self.lat / 15)
+            s = round(self.lon / 15)
             return str(s)
 
     def get_elevation_geonames(self):
