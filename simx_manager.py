@@ -194,7 +194,6 @@ class SIMX:
             elif section == 'FullForcing':
                 if not self.FuFoSelected:
                     self.FuFoSelected = True
-
                 if '<fileName>' in row:
                     self.FullForcing.fileName = row.split(">", 1)[1].split("<", 1)[0].strip()
                 elif '<forceT>' in row:
@@ -207,10 +206,20 @@ class SIMX:
                     self.FullForcing.forcePrecip = int(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<forceRadClouds>' in row:
                     self.FullForcing.forceRadClouds = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                elif '<interpolationMethod>' in row:
+                    self.FullForcing.interpolationMethod = int(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<nudging>' in row:
                     self.FullForcing.nudging = int(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<nudgingFactor>' in row:
                     self.FullForcing.nudgingFactor = float(row.split(">", 1)[1].split("<", 1)[0].strip())
+                elif '<minFlowsteps>' in row:
+                    self.FullForcing.minFlowsteps = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                elif '<limitWind2500>' in row:
+                    self.FullForcing.limitWind2500 = int(row.split(">", 1)[1].split("<", 1)[0].strip())
+                elif '<maxWind2500>' in row:
+                    self.FullForcing.maxWind2500 = float(row.split(">", 1)[1].split("<", 1)[0].strip())
+                elif '<z_0>' in row:
+                    self.FullForcing.z_0 = float(row.split(">", 1)[1].split("<", 1)[0].strip())
             elif section == 'SimpleForcing':
                 if not self.SiFoSelected:
                     self.SiFoSelected = True
@@ -475,8 +484,13 @@ class SIMX:
                 print(f"     <forceWind> {self.FullForcing.forceWind} </forceWind>", file=output_file)
                 print(f"     <forcePrecip> {self.FullForcing.forcePrecip} </forcePrecip>", file=output_file)
                 print(f"     <forceRadClouds> {self.FullForcing.forceRadClouds} </forceRadClouds>", file=output_file)
+                print(f"     <interpolationMethod> {self.FullForcing.interpolationMethod} </interpolationMethod>", file=output_file)
                 print(f"     <nudging> {self.FullForcing.nudging} </nudging>", file=output_file)
                 print(f"     <nudgingFactor> {self.FullForcing.nudgingFactor} </nudgingFactor>", file=output_file)
+                print(f"     <minFlowsteps> {self.FullForcing.minFlowsteps} </minFlowsteps>", file=output_file)
+                print(f"     <limitWind2500> {self.FullForcing.limitWind2500} </limitWind2500>", file=output_file)
+                print(f"     <maxWind2500> {self.FullForcing.maxWind2500} </maxWind2500>", file=output_file)
+                print(f"     <z_0> {self.FullForcing.z_0} </z_0>", file=output_file)
                 print("  </FullForcing>", file=output_file)
             # Open / Cyclic
             elif self.otherSelected:
@@ -599,16 +613,16 @@ class simx_mainData:
         self.simDuration = 24
         self.windSpeed = 1.5
         self.windDir = 270.0
-        self.z0 = 0.01000
+        self.z0 = 0.1000
         self.T_H = 293.15
-        self.Q_H = 9.0
+        self.Q_H = 8.0
         self.Q_2m = 50.0
 
 
 class simx_TThread:
     def __init__(self):
         self.UseTThread_CallMain = 0
-        self.TThreadPRIO = 4
+        self.TThreadPRIO = 5
 
 
 class simx_ModelTiming:
@@ -671,7 +685,7 @@ class simx_OutputSettings:
         self.netCDF = 1
         self.netCDFAllDataInOneFile = 1
         self.netCDFWriteOnlySmallFile = 0
-        self.inclNestingGrids = 0
+        self.inclNestingGrids = 1
         self.writeAgents = 0
         self.writeAtmosphere = 1
         self.writeBuildings = 1
@@ -717,8 +731,8 @@ class simx_Building:
 
 class simx_RadScheme:
     def __init__(self):
-        self.IVSHeightAngle_HiRes = 45
-        self.IVSAziAngle_HiRes = 45
+        self.IVSHeightAngle_HiRes = 30
+        self.IVSAziAngle_HiRes = 30
         self.IVSHeightAngle_LoRes = 45
         self.IVSAziAngle_LoRes = 45
         self.AdvCanopyRadTransfer = 1
@@ -747,7 +761,7 @@ class simx_InflowAvg:
 
 class simx_PlantModel:
     def __init__(self):
-        self.CO2BackgroundPPM = 400.0
+        self.CO2BackgroundPPM = 450.0
         self.LeafTransmittance = 1
         self.TreeCalendar = 1
 
@@ -766,10 +780,15 @@ class simx_LBC:
 class simx_FullForcing:
     def __init__(self):
         self.fileName = ''
-        self.forceT = 1
         self.forceQ = 1
+        self.forceT = 1
         self.forceWind = 1
         self.forcePrecip = 1
         self.forceRadClouds = 1
+        self.interpolationMethod = 0
         self.nudging = 0
         self.nudgingFactor = 1.0
+        self.minFlowsteps = 50
+        self.limitWind2500 = 0
+        self.maxWind2500 = 999.0
+        self.z_0 = 0.10

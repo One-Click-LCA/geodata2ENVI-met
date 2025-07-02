@@ -142,15 +142,19 @@ class EDT:
             self.var_name = var_name
             self.z = z
             self.terrain_follow = self.check_for_terrain(filepath)
+            # TODO @HSI
+            # Check for nesting cells by iteration over spacing_x/y
+            # Memorize number of nestiung cells. Size specified_data-array accordingly. Adjust iteration start and end
+            # in load_defined_data / load_defined_data_dem
             if self.terrain_follow:
-                offset = self.calc_offset(' Objects ( )',0)
+                offset = self.calc_offset(' Objects ( )', 0)
                 count = self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.nr_zdata
                 self.dem_offset = np.empty([self.associated_edx.nr_xdata, self.associated_edx.nr_ydata], dtype=int)
 
                 self.edt_file = np.fromfile(filepath, dtype=np.float32, offset=offset, count=count)
-                self.load_terrain_data() # we now have the dem_offset -> so the k-level of the first atmosphere cell
+                self.load_terrain_data()  # we now have the dem_offset -> so the k-level of the first atmosphere cell
 
-                offset = self.calc_offset(self.var_name, 0) # z_level = 0 because we need to load the full 3 model
+                offset = self.calc_offset(self.var_name, 0)  # z_level = 0 because we need to load the full 3 model
                 count = self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.nr_zdata
                 self.specified_data = np.empty([self.associated_edx.nr_xdata, self.associated_edx.nr_ydata,
                                                 self.associated_edx.data_per_variable], dtype=np.float32)
@@ -169,19 +173,13 @@ class EDT:
         offset = self.calc_offset(' Objects ( )', self.z)
         if offset >= 0:
             count = self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.data_per_variable
-            #print(offset)
-            #print(count)
             has_terrain = False
-            #print(filepath)
             edt_file_tmp = np.fromfile(filepath, dtype=np.float32, offset=offset, count=count)
             for y in range(self.associated_edx.nr_ydata):
                 for x in range(self.associated_edx.nr_xdata):
                     for n in range(self.associated_edx.data_per_variable):
                         idx = (y * self.associated_edx.data_per_variable * self.associated_edx.nr_xdata) + (x * self.associated_edx.data_per_variable) + n
-                        #print(edt_file_tmp)
-                        #print(idx)
-                        #print(edt_file_tmp[idx])
-                        if (round(edt_file_tmp[idx]) == self.demID):
+                        if round(edt_file_tmp[idx]) == self.demID:
                             has_terrain = True
             return has_terrain
         else:
@@ -191,14 +189,16 @@ class EDT:
         found = False
         i = 0
         for var in self.associated_edx.name_variables:
-            if var_name == " Objects ( )":                               # Objects are special -> older versions of ENVI-met / BIO-met were not using the same exact string for "Objects"...
+            if var_name == " Objects ( )":   # Objects are special -> older versions of ENVI-met / BIO-met were not using the same exact string for "Objects"...
                 if "Objects" in var:
                     found = True
                     break
                 else:
                     i += 1
             else:
-                if var == var_name:
+                # in the new QGIS-plugin version the var-name from EDX/EDT files is trimmed (the unit gets cut off) to make it comparable to NetCDF var-names
+                # This is the reason we need the 'or'-part here
+                if (var == var_name) or (var.split('(', 1)[0].strip() == var_name):
                     found = True
                     break
                 else:

@@ -4,7 +4,7 @@ from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QVariant,
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QProgressBar
 from qgis.core import QgsProject, Qgis, QgsField, QgsMapLayerProxyModel, QgsPoint, QgsVectorLayer, QgsRectangle, \
-    QgsFeatureRequest, QgsFieldProxyModel, QgsMessageLog, QgsRasterLayer, QgsSettings
+    QgsFeatureRequest, QgsFieldProxyModel, QgsMessageLog, QgsRasterLayer, QgsStyle
 from qgis.PyQt.QtCore import *
 
 # Initialize Qt resources from file resources.py
@@ -17,9 +17,11 @@ from .Worker import *
 from .EDX_EDT import *
 from datetime import datetime
 from PyQt5 import QtWidgets
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QListWidget, QListWidgetItem
 import os
 import subprocess
+from .Helper_Functions import *
+from .Dataseries_handler import *
 
 
 class Geo2ENVImet:
@@ -38,22 +40,16 @@ class Geo2ENVImet:
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
         # initialize locale
-        try:
-            locale = QgsSettings().value("locale/userLocale")
-            if not locale:
-                locale = QLocale().name()
-            locale = locale[0:2]
+        locale = QSettings().value('locale/userLocale')[0:2]
+        locale_path = os.path.join(
+            self.plugin_dir,
+            'i18n',
+            'Geo2ENVImet_{}.qm'.format(locale))
 
-            locale_path = os.path.join(self.plugin_dir, "i18n", "Geo2ENVImet_{}.qm".format(locale))
-
-            if os.path.exists(locale_path):
-                self.translator = QTranslator()
-                self.translator.load(locale_path)
-
-                if qVersion() > "4.3.3":
-                    QCoreApplication.installTranslator(self.translator)
-        except TypeError:
-            pass
+        if os.path.exists(locale_path):
+            self.translator = QTranslator()
+            self.translator.load(locale_path)
+            QCoreApplication.installTranslator(self.translator)
 
         # Declare instance attributes
         self.actions = []
@@ -78,12 +74,6 @@ class Geo2ENVImet:
         self.generalSettings_states = ('No model area (*.INX) selected!', 'Invalid simulation name!', '')
         self.meteoSettings_states = ('Simple Forcing selected', 'Full Forcing selected - FOX-file missing',
                                      'Full Forcing selected', 'Open/Cyclic selected')
-
-        # data to load edt/edx-files
-        self.edt_filenames = []
-        self.edt_data = []
-
-        self.edx_file = None
 
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
@@ -207,10 +197,6 @@ class Geo2ENVImet:
             self.iface.messageBar().pushMessage("Error", "Please define an output filename", level=Qgis.Warning)
             return
 
-        if self.dlg.cb_subArea.currentLayer() is None:
-            self.iface.messageBar().pushMessage("Error", "Please first select a sub area!", level=Qgis.Warning)
-            return
-
         self.thread = QThread()
         self.worker = Worker()
 
@@ -299,7 +285,6 @@ class Geo2ENVImet:
         if self.worker.srcLID_UseCustom:
             self.worker.srcLID = QgsField("notAvail", QVariant.String)
             self.worker.srcLID_custom = self.dlg.le_srcL.text()
-            # print("Custom ID set to: " + self.worker.srcLID_custom)
         else:
             self.worker.srcLID = self.dlg.cb_srcLID.currentField()
             self.worker.srcLID_custom = "notAvail"
@@ -343,7 +328,6 @@ class Geo2ENVImet:
             self.worker.dEMBand = self.dlg.cb_demBand.currentBand()
 
         self.worker.dEMInterpol = self.dlg.cb_demInterpol.currentIndex()
-        #self.worker.dEMInterpol = self.dlg.chk_interpolateDEM.isChecked()
 
     def transfer_3dplant_info_to_worker(self):
         # transfer 3d plant info
@@ -443,14 +427,14 @@ class Geo2ENVImet:
             self.worker.bTop_custom = self.dlg.se_bTop.value()
         else:
             self.worker.bTop = self.dlg.cb_bTop.currentField()
-            self.worker.bTop_custom = -999
+            self.worker.bTop_custom = C_NODATA_VALUE
         self.worker.bBot_UseCustom = self.dlg.chk_bBot.isChecked()
         if self.worker.bBot_UseCustom:
             self.worker.bBot = QgsField("notAvail", QVariant.Int)
             self.worker.bBot_custom = self.dlg.se_bBot.value()
         else:
             self.worker.bBot = self.dlg.cb_bBot.currentField()
-            self.worker.bBot_custom = -999
+            self.worker.bBot_custom = C_NODATA_VALUE
         self.worker.bName_UseCustom = self.dlg.chk_bName.isChecked()
         if self.worker.bName_UseCustom:
             self.worker.bName = QgsField("notAvail", QVariant.String)
@@ -623,7 +607,7 @@ class Geo2ENVImet:
         # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
         # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
         self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-        # Connect signals and slots:
+        # Connect signals and slots
         self.thread.started.connect(self.worker.previewdz)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -636,7 +620,6 @@ class Geo2ENVImet:
 
         self.dlg.bt_SaveINX.setEnabled(bEnabled)
         self.dlg.bt_SaveTo.setEnabled(bEnabled)
-        # self.dlg.gb_Geodata.setEnabled(bEnabled)
 
         self.dlg.se_dx.setEnabled(bEnabled)
         self.dlg.se_dy.setEnabled(bEnabled)
@@ -736,7 +719,7 @@ class Geo2ENVImet:
             # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
             # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
             self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-            # Connect signals and slots:
+            # Connect signals and slots
             self.thread.started.connect(lambda: self.worker.load_simx(ui=self.dlg, filepath=filename[0]))
             self.worker.finished.connect(self.thread.quit)
             self.worker.finished.connect(self.worker.deleteLater)
@@ -900,6 +883,30 @@ class Geo2ENVImet:
                         self.worker.maxHeightTotal) + " m (Building = " + str(
                         self.worker.maxHeightB) + " m, DEM = " + str(self.worker.maxHeightDEM) + " m)")
 
+    def select_cb_Output_SubArea(self):
+        # check if this layer only contains one polygon feature
+        tmp_subAreaLayer = self.dlg.cb_Output_SubArea.currentLayer()
+        # count features in the vector layer -> check if there is only one
+        if tmp_subAreaLayer is not None:
+            tmp_subAreaFeats = tmp_subAreaLayer.getFeatures()
+            if tmp_subAreaFeats is None:
+                self.iface.messageBar().pushMessage("Error", "Selected sub area layer has no feature",
+                                                    level=Qgis.Warning)
+            else:
+                # count the features in subArea-Layer
+                tmp_subAreaFeatCnt = sum(1 for _ in tmp_subAreaFeats)
+                if tmp_subAreaFeatCnt != 1:
+                    self.iface.messageBar().pushMessage("Error",
+                                                        "More than 1 feature in sub area layer - please use a layer "
+                                                        "that contains only one polygon feature, this determines the "
+                                                        "bounding box of your model area",
+                                                        level=Qgis.Warning)
+                else:
+                    print(tmp_subAreaLayer)
+                    dataseries.SelectedSubArea = tmp_subAreaLayer
+        else:
+            dataseries.SelectedSubArea = None
+
     def select_cb_subAreaClick(self):
         # check if this layer only contains one polygon feature
         tmp_subAreaLayer = self.dlg.cb_subArea.currentLayer()
@@ -914,10 +921,13 @@ class Geo2ENVImet:
                 tmp_subAreaFeatCnt = sum(1 for _ in tmp_subAreaFeats)
                 if tmp_subAreaFeatCnt != 1:
                     self.iface.messageBar().pushMessage("Error",
-                                                        "More than 1 feature in sub area layer - please use a layer that contains only one polygon feature, this determines the bounding box of your model area",
+                                                        "More than 1 feature in sub area layer - please use a layer "
+                                                        "that contains only one polygon feature, this determines the "
+                                                        "bounding box of your model area",
                                                         level=Qgis.Warning)
                 else:
-                    # now that we ensured that there is only one polygon in the layer, we can call the worker (this also calls the previewdxyz)
+                    # now that we ensured that there is only one polygon in the layer, we can call the worker
+                    # (this also calls the previewdxyz)
                     self.startWorkerCalcVertExt()
         else:
             self.iface.messageBar().pushMessage("Error", "Selected layer does not exist", level=Qgis.Warning)
@@ -929,7 +939,8 @@ class Geo2ENVImet:
             process_id = os.spawnv(os.P_NOWAIT, filepath, ["-someFlag", "someOtherFlag"])
         else:
             self.iface.messageBar().pushMessage("Error",
-                                                "Could not find a local ENVI-met installation / workspace to load database lookup",
+                                                "Could not find a local ENVI-met installation / workspace to load "
+                                                "database lookup",
                                                 level=Qgis.Warning)
 
     def load_db(self):
@@ -946,7 +957,8 @@ class Geo2ENVImet:
             [self.dlg.lw_prj.addItem(p.name) for p in self.enviProjects.projects]
         else:
             self.iface.messageBar().pushMessage("Error",
-                                                "Could not find a local ENVI-met installation / workspace to load database lookup",
+                                                "Could not find a local ENVI-met installation / workspace to load "
+                                                "database lookup",
                                                 level=Qgis.Warning)
 
     def update_db(self):
@@ -1019,59 +1031,139 @@ class Geo2ENVImet:
             self.setup_ui_load_results_tab()
 
     def setup_ui_load_results_tab(self):
-        self.dlg.lw_edt_files.clear()
-        self.dlg.cb_dataLayers.clear()
-        self.dlg.cb_dataLayers.currentIndexChanged.connect(self.reset_progress_bars_sim_results)
-        self.dlg.bt_selectEDT.clicked.connect(self.select_result_files)
-        self.dlg.bt_loadResults.clicked.connect(self.load_simulation_data)
+        self.dlg.bt_selectSeriesA.clicked.connect(self.select_seriesA_folder)
+        self.dlg.bt_selectSeriesB.clicked.connect(self.select_seriesB_folder)
+        self.dlg.sb_height.valueChanged.connect(self.changeHeightValue)
+        self.dlg.cb_dataLayers.currentIndexChanged.connect(self.changeSelectedVariable)
+        self.dlg.cb_Output_SubArea.setShowCrs(True)
+        self.dlg.cb_Output_SubArea.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.dlg.cb_Output_SubArea.layerChanged.connect(self.select_cb_Output_SubArea)
+        self.dlg.bt_Select_A.clicked.connect(self.Select_all_A)
+        self.dlg.bt_Select_B.clicked.connect(self.Select_all_B)
+        self.dlg.bt_Select_Delta.clicked.connect(self.Select_all_Delta)
         self.dlg.bt_addToMap.clicked.connect(self.add_to_map)
-        self.dlg.bt_clearSelection.clicked.connect(self.clear_selection_load_data)
-        self.dlg.sb_zLevel.valueChanged.connect(self.z_lvl_changed)
+        self.dlg.chk_onlyComparable.clicked.connect(self.loadVariablesInUI)
 
-    def z_lvl_changed(self):
-        self.calc_height()
-        self.reset_progress_bars_sim_results()
-
-    def calc_height(self):
-        z_lvl = self.dlg.sb_zLevel.value()
-        if self.edx_file is not None:
-            if z_lvl > (len(self.edx_file.spacing_z) - 1):
-                self.dlg.sb_zLevel.setValue((len(self.edx_file.spacing_z) - 1))
-            else:
-                # add one because list slicing End-index is exclusive
-                s = round(sum(self.edx_file.spacing_z[0:(z_lvl + 1)]) - (self.edx_file.spacing_z[z_lvl] / 2), 2)
-                self.dlg.l_heightInMeter.setText("Height in meter: " + str(s) + " m")
+    def Select_all_A(self):
+        if self.dlg.bt_Select_A.text() == 'Select All':
+            for i in range(self.dlg.lw_SeriesA.count()):
+                if self.dlg.lw_SeriesA.item(i).flags() & QtCore.Qt.ItemIsUserCheckable:
+                    self.dlg.lw_SeriesA.item(i).setCheckState(Qt.Checked)
+            self.dlg.bt_Select_A.setText('Clear Selection')
         else:
-            self.dlg.l_heightInMeter.setText("Height in meter: 0 m")
+            for i in range(self.dlg.lw_SeriesA.count()):
+                if self.dlg.lw_SeriesA.item(i).flags() & QtCore.Qt.ItemIsUserCheckable:
+                    self.dlg.lw_SeriesA.item(i).setCheckState(Qt.Unchecked)
+            self.dlg.bt_Select_A.setText('Select All')
 
-    def clear_selection_load_data(self):
-        self.dlg.lw_edt_files.clear()
+    def Select_all_B(self):
+        if self.dlg.bt_Select_B.text() == 'Select All':
+            for i in range(self.dlg.lw_SeriesB.count()):
+                if self.dlg.lw_SeriesB.item(i).flags() & QtCore.Qt.ItemIsUserCheckable:
+                    self.dlg.lw_SeriesB.item(i).setCheckState(Qt.Checked)
+            self.dlg.bt_Select_B.setText('Clear Selection')
+        else:
+            for i in range(self.dlg.lw_SeriesB.count()):
+                if self.dlg.lw_SeriesB.item(i).flags() & QtCore.Qt.ItemIsUserCheckable:
+                    self.dlg.lw_SeriesB.item(i).setCheckState(Qt.Unchecked)
+            self.dlg.bt_Select_B.setText('Select All')
+
+    def Select_all_Delta(self):
+        if self.dlg.bt_Select_Delta.text() == 'Select All':
+            for i in range(self.dlg.lw_Delta.count()):
+                if self.dlg.lw_Delta.item(i).flags() & QtCore.Qt.ItemIsUserCheckable:
+                    self.dlg.lw_Delta.item(i).setCheckState(Qt.Checked)
+            self.dlg.bt_Select_Delta.setText('Clear Selection')
+        else:
+            for i in range(self.dlg.lw_Delta.count()):
+                if self.dlg.lw_Delta.item(i).flags() & QtCore.Qt.ItemIsUserCheckable:
+                    self.dlg.lw_Delta.item(i).setCheckState(Qt.Unchecked)
+            self.dlg.bt_Select_Delta.setText('Select All')
+
+    def changeHeightValue(self):
+        dataseries.SelectedHeight = self.dlg.sb_height.value()
+
+    def changeSelectedVariable(self):
+        cb_item_text = self.dlg.cb_dataLayers.itemText(self.dlg.cb_dataLayers.currentIndex())
+        dataseries.setSelectedVariableState(cb_item_text)
+        dataseries.setSelectedVariable(cb_item_text)
+
+    def select_seriesA_folder(self):
+        folder = QFileDialog.getExistingDirectory(self.dlg, "Select input folder for Series A")
+        if folder == '':
+            self.dlg.le_seriesA_path.setText('')
+        else:
+            self.dlg.le_seriesA_path.setText(folder)
+        dataseries.fillList(folder, 'A')
+        self.setupUI()
+
+    def select_seriesB_folder(self):
+        folder = QFileDialog.getExistingDirectory(self.dlg, "Select input folder for Series B")
+        if folder == '':
+            self.dlg.le_seriesB_path.setText('')
+        else:
+            self.dlg.le_seriesB_path.setText(folder)
+        dataseries.fillList(folder, 'B')
+        self.setupUI()
+
+    def setupUI(self):
+        dataseries.reset()
+        self.dlg.sb_height.setValue(0.0)
+        self.dlg.cb_Output_SubArea.setCurrentIndex(0)
+        self.reset_progess_bar_add_to_map()
+        self.fill_listWidgets()
+        self.loadVariablesInUI()
+
+    def loadVariablesInUI(self):
         self.dlg.cb_dataLayers.clear()
-        self.edt_filenames.clear()
-        self.edx_file = None
-        self.dlg.sb_zLevel.setValue(0)
-        self.dlg.le_nameLayers.setText('')
-        self.reset_progress_bars_sim_results()
+        for var in dataseries.getVariablesAsList(self.dlg.chk_onlyComparable.isChecked()):
+            self.dlg.cb_dataLayers.insertItem(999999, var)
 
-    def select_result_files(self):
-        filenames = QFileDialog.getOpenFileNames(
-            self.dlg, "Select ENVI-met simulation results", "", '*.EDT')
-        if len(filenames[0]) != 0:
-            self.dlg.lw_edt_files.clear()
-            self.edt_filenames.clear()
-            for edt in filenames[0]:
-                self.edt_filenames.append(edt)
-                self.dlg.lw_edt_files.addItem(edt)
-            self.edx_file = EDX(filepath=f'{self.edt_filenames[0].rsplit(".", 1)[0]}.edx')
-            self.dlg.cb_dataLayers.clear()
-            for name in self.edx_file.name_variables:
-                # 1st var: index. If index is greater than the length of the item-list, the new items gets appended
-                self.dlg.cb_dataLayers.insertItem(999999, name)
-            self.reset_progress_bars_sim_results()
-            if self.edx_file.data_per_variable > 1:
-                self.iface.messageBar().pushMessage("Error", "Please select output files with only scalar values.",
-                                                    level=Qgis.Warning)
-                self.clear_selection_load_data()
+    def fill_listWidgets(self):
+        # clear listWidgets
+        self.dlg.lw_SeriesA.clear()
+        self.dlg.lw_SeriesB.clear()
+        self.dlg.lw_Delta.clear()
+        # fill listWidgets with timesteps
+        for i in range(len(dataseries.mergedList)):
+            merged_tstp = dataseries.mergedList[i]
+            # Create entry for listWidgetA
+            item = QListWidgetItem()
+            if merged_tstp.placeholderA:
+                item.setText(' ')
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsSelectable)
+            else:
+                item.setText(merged_tstp.strDatetime)
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsSelectable)
+                item.setCheckState(QtCore.Qt.Unchecked)
+            self.dlg.lw_SeriesA.addItem(item)
+
+            # Create entry for listWidgetB
+            item = QListWidgetItem()
+            if merged_tstp.placeholderB:
+                item.setText(' ')
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsSelectable)
+            else:
+                item.setText(merged_tstp.strDatetime)
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsSelectable)
+                item.setCheckState(QtCore.Qt.Unchecked)
+            self.dlg.lw_SeriesB.addItem(item)
+
+            # Create entry for Delta-listWidget
+            item = QListWidgetItem()
+            item.setText(' ')
+            if merged_tstp.placeholderA or merged_tstp.placeholderB:
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsSelectable)
+            else:
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsSelectable)
+                item.setCheckState(QtCore.Qt.Unchecked)
+            self.dlg.lw_Delta.addItem(item)
 
     def add_to_map(self):
         self.thread = QThread()
@@ -1080,96 +1172,80 @@ class Geo2ENVImet:
         # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
         # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
         self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-        # Connect signals and slots:
-        user_name = self.dlg.le_nameLayers.text()
-        var_selected = self.dlg.cb_dataLayers.itemText(self.dlg.cb_dataLayers.currentIndex())
-        interpolRes_usr = self.dlg.sb_interpolRes.value()
-        sampling_usr = 0        
-        if self.dlg.cb_samplingOut.currentIndex() == 0:
-            sampling_usr = 0
-        if self.dlg.cb_samplingOut.currentIndex() == 1:
-            sampling_usr = 1
-        if self.dlg.cb_samplingOut.currentIndex() == 2:
-            sampling_usr = 3
 
-        if user_name == '':
-            var_name = var_selected
-        else:
-            var_name = user_name + '_' + var_selected
-        if self.dlg.rb_onlyLoad.isChecked():
-            self.thread.started.connect(lambda: self.worker.add_layers_to_map(edt_list=self.edt_data, var_name=var_name,
-                                                                              only_load_data=True,
-                                                                              load_and_rotate_data=False,
-                                                                              interpolate_data=False))
-        elif self.dlg.rb_loadAndRotate.isChecked():
-            self.thread.started.connect(lambda: self.worker.add_layers_to_map(edt_list=self.edt_data, var_name=var_name,
-                                                                              only_load_data=False,
-                                                                              load_and_rotate_data=True,
-                                                                              interpolate_data=False))
-        elif self.dlg.rb_loadRotateInterpolate.isChecked():
-            self.thread.started.connect(lambda: self.worker.add_layers_to_map(edt_list=self.edt_data, var_name=var_name,
-                                                                              only_load_data=False,
-                                                                              load_and_rotate_data=True,
-                                                                              interpolate_data=True,
-                                                                              interpol_res=interpolRes_usr,
-                                                                              sampling_method=sampling_usr))
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
+        # update timesteps checked in List A
+        dataseries.CheckCount = 0
+        i = 0
+        items = [self.dlg.lw_SeriesA.item(x) for x in range(self.dlg.lw_SeriesA.count())]
+        for item in items:
+            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
+            # check if there is a itemText. Otherwise, the current index is a placeholder
+            if item.text() != ' ':
+                # check if the selected variable state is 'Only Series A' or 'Comparable'
+                if ((dataseries.SelectedVariableState == 'Only Series A')
+                    or (dataseries.SelectedVariableState == 'Comparable')) \
+                        and item.checkState():
+                    dataseries.mergedList[i].checkedA = True
+                    dataseries.CheckCount += 1
+                else:
+                    dataseries.mergedList[i].checkedA = False
+            i += 1
 
-        # disable GUI
-        self.ui_upd_edt_load(b=False, result_data=False)
-        # enable GUI, when done
-        self.worker.progress.connect(self.report_progress_add_to_map)
-        self.thread.finished.connect(lambda: self.ui_upd_edt_load(b=True, result_data=False))
+        # update timesteps checked in List B
+        i = 0
+        items = [self.dlg.lw_SeriesB.item(x) for x in range(self.dlg.lw_SeriesB.count())]
+        for item in items:
+            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
+            # check if there is a itemText. Otherwise, the current index is a placeholder
+            if item.text() != ' ':
+                # check if the selected variable state is 'Only Series B' or 'Comparable'
+                if ((dataseries.SelectedVariableState == 'Only Series B')
+                    or (dataseries.SelectedVariableState == 'Comparable')) \
+                        and item.checkState():
+                    dataseries.mergedList[i].checkedB = True
+                    dataseries.CheckCount += 1
+                else:
+                    dataseries.mergedList[i].checkedB = False
+            i += 1
 
-        self.thread.start()  # finally start the thread
+        # update timesteps checked in Delta-List
+        i = 0
+        items = [self.dlg.lw_Delta.item(x) for x in range(self.dlg.lw_Delta.count())]
+        for item in items:
+            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
+            # check if there is a timestep in both lists A and B, then we got a delta-checkbox
+            if (not dataseries.mergedList[i].placeholderA) and (not dataseries.mergedList[i].placeholderB):
+                # check if the selected variable state is 'Comparable'
+                if (dataseries.SelectedVariableState == 'Comparable') and item.checkState():
+                    dataseries.mergedList[i].delta_checked = True
+                    dataseries.CheckCount += 1
+                else:
+                    dataseries.mergedList[i].delta_checked = False
+            i += 1
 
-    def load_simulation_data(self):
-        zlvl = int(self.dlg.sb_zLevel.value())
-        var = self.dlg.cb_dataLayers.itemText(self.dlg.cb_dataLayers.currentIndex())
+        if dataseries.CheckCount != 0:
+            self.thread.started.connect(lambda: self.worker.add_layers_to_map())
+            # disable GUI
+            self.ui_upd_add_to_map(b=False)
+            self.thread.finished.connect(lambda: self.ui_upd_add_to_map(b=True))
 
-        self.edt_data.clear()
-        self.thread = QThread()
-        self.worker = Worker()
-
-        # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
-        # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
-        self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-        # Connect signals and slots:
-        self.thread.started.connect(
-            lambda: self.worker.load_simulation_data(edt_filenames=self.edt_filenames, var_name=var, z=zlvl))
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
-
-        # disable GUI
-        self.ui_upd_edt_load(b=False, result_data=False)
-        # enable GUI, when done
-        self.worker.progress.connect(self.report_progress_edt)
-        self.thread.finished.connect(lambda: self.ui_upd_edt_load(b=True, result_data=True))
-
-        self.thread.start()  # finally start the thread
-
-    def report_progress_edt(self, progress):
-        self.dlg.pb_loadEDT.setValue(progress)
+            self.worker.finished.connect(self.thread.quit)
+            self.worker.finished.connect(self.worker.deleteLater)
+            self.thread.finished.connect(self.thread.deleteLater)
+            # enable GUI, when done
+            self.worker.progress.connect(self.report_progress_add_to_map)
+            self.thread.start()  # finally start the thread
 
     def report_progress_add_to_map(self, progress):
         self.dlg.pb_addToMap.setValue(progress)
 
-    def reset_progress_bars_sim_results(self):
-        self.dlg.pb_loadEDT.setValue(0)
+    def reset_progess_bar_add_to_map(self):
         self.dlg.pb_addToMap.setValue(0)
 
-    def ui_upd_edt_load(self, b: bool, result_data: bool = False):
-        if result_data:
-            self.edt_data = self.worker.edt_data
-
-        self.dlg.bt_selectEDT.setEnabled(b)
-        self.dlg.bt_clearSelection.setEnabled(b)
-        self.dlg.bt_loadResults.setEnabled(b)
+    def ui_upd_add_to_map(self, b: bool):
         self.dlg.bt_addToMap.setEnabled(b)
-        self.dlg.sb_zLevel.setEnabled(b)
+        if not b:
+            self.reset_progess_bar_add_to_map()
 
     def setup_ui_create_sim_tab(self):
         # this function setups the UI of the Create ENVI-met simulation tab
@@ -1189,9 +1265,7 @@ class Geo2ENVImet:
         self.dlg.chk_buildingsSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Buildings_2))
         self.dlg.chk_pollutantsSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Pollutants))
         self.dlg.chk_outputSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Output))
-        self.dlg.chk_timingSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Timing))
         self.dlg.chk_expertSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Expert))
-        self.dlg.chk_plantsSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Plants))
 
         self.dlg.bt_fileExpl.clicked.connect(lambda: self.select_output_file('SIMX'))
         self.dlg.bt_inxForSim.clicked.connect(self.select_inx_input)
@@ -1210,7 +1284,6 @@ class Geo2ENVImet:
         self.dlg.calendar_startDateSim.selectionChanged.connect(self.update_date)
 
         self.dlg.le_fullSimName.editingFinished.connect(self.simsettings_change)
-        self.dlg.le_shortNameSim.editingFinished.connect(self.simsettings_change)
         self.dlg.le_inxForSim.editingFinished.connect(self.simsettings_change)
         self.dlg.le_selectedFOX.editingFinished.connect(self.select_forcing_mode)
 
@@ -1227,13 +1300,6 @@ class Geo2ENVImet:
         self.dlg.hs_minT.valueChanged.connect(self.sifo_slider_update)
         self.dlg.hs_maxHum.valueChanged.connect(self.sifo_slider_update)
         self.dlg.hs_minHum.valueChanged.connect(self.sifo_slider_update)
-
-        self.dlg.rb_yesHeightCap.clicked.connect(self.radiation_ui_update)
-        self.dlg.rb_noHeightCap.clicked.connect(self.radiation_ui_update)
-        self.dlg.rb_useIVSyes.clicked.connect(self.radiation_ui_update)
-        self.dlg.rb_useIVSno.clicked.connect(self.radiation_ui_update)
-        self.dlg.rbACRTyes.clicked.connect(self.radiation_ui_update)
-        self.dlg.rb_ACRTno.clicked.connect(self.radiation_ui_update)
 
         self.dlg.cb_userPolluType.currentIndexChanged.connect(self.pollutants_ui_update)
 
@@ -1432,24 +1498,6 @@ class Geo2ENVImet:
         else:
             self.dlg.gb_additionalMyPollu.setVisible(False)
 
-    def radiation_ui_update(self):
-        if self.dlg.rb_yesHeightCap.isChecked():
-            self.dlg.sb_heightCap.setEnabled(True)
-        else:
-            self.dlg.sb_heightCap.setEnabled(False)
-
-        if self.dlg.rb_useIVSyes.isChecked():
-            self.dlg.cb_resHeightIVS.setEnabled(True)
-            self.dlg.cb_resAziIVS.setEnabled(True)
-        else:
-            self.dlg.cb_resHeightIVS.setEnabled(False)
-            self.dlg.cb_resAziIVS.setEnabled(False)
-
-        if self.dlg.rbACRTyes.isChecked():
-            self.dlg.sb_ACRTdays.setEnabled(True)
-        else:
-            self.dlg.sb_ACRTdays.setEnabled(False)
-
     def sifo_slider_update(self):
         valMaxT = self.dlg.hs_maxT.value()
         valMinT = self.dlg.hs_minT.value()
@@ -1483,8 +1531,7 @@ class Geo2ENVImet:
 
     def simsettings_change(self):
         if (self.dlg.le_inxForSim.text() != '') and not self.dlg.le_inxForSim.text().isspace():
-            if ((self.dlg.le_fullSimName.text() != '') and not self.dlg.le_fullSimName.text().isspace()) \
-                    and ((self.dlg.le_shortNameSim.text() != '') and not self.dlg.le_shortNameSim.text().isspace()):
+            if (self.dlg.le_fullSimName.text() != '') and not self.dlg.le_fullSimName.text().isspace():
                 self.dlg.lb_generalSettings.setText(self.generalSettings_states[2])
                 self.dlg.cb_generalSettings.setCheckState(Qt.Checked)
             else:
@@ -1525,6 +1572,11 @@ class Geo2ENVImet:
             else:
                 self.dlg.lb_meteorology.setText(self.meteoSettings_states[2])
                 self.dlg.cb_meteo.setCheckState(Qt.Checked)
+        else:
+            # show page for open/cyclic
+            self.dlg.stackedWidget_3.setCurrentIndex(2)
+            self.dlg.lb_meteorology.setText(self.meteoSettings_states[3])
+            self.dlg.cb_meteo.setCheckState(Qt.Checked)
 
     @staticmethod
     def switch_enabled_tab(tab):
@@ -1537,8 +1589,6 @@ class Geo2ENVImet:
         self.dlg.tab_Radiation.setEnabled(False)
         self.dlg.tab_Buildings_2.setEnabled(False)
         self.dlg.tab_Pollutants.setEnabled(False)
-        self.dlg.tab_Plants.setEnabled(False)
-        self.dlg.tab_Timing.setEnabled(False)
         self.dlg.tab_Output.setEnabled(False)
         self.dlg.tab_Expert.setEnabled(False)
 
@@ -1555,15 +1605,11 @@ class Geo2ENVImet:
         self.dlg.chk_buildingsSim.setCheckState(Qt.Unchecked)
         self.dlg.chk_pollutantsSim.setCheckState(Qt.Unchecked)
         self.dlg.chk_outputSim.setCheckState(Qt.Unchecked)
-        self.dlg.chk_timingSim.setCheckState(Qt.Unchecked)
         self.dlg.chk_expertSim.setCheckState(Qt.Unchecked)
-        self.dlg.chk_plantsSim.setCheckState(Qt.Unchecked)
         self.dlg.tab_Soil.setEnabled(False)
         self.dlg.tab_Radiation.setEnabled(False)
         self.dlg.tab_Buildings_2.setEnabled(False)
         self.dlg.tab_Pollutants.setEnabled(False)
-        self.dlg.tab_Plants.setEnabled(False)
-        self.dlg.tab_Timing.setEnabled(False)
         self.dlg.tab_Expert.setEnabled(False)
         self.dlg.tab_Output.setEnabled(False)
         # file management
@@ -1583,7 +1629,6 @@ class Geo2ENVImet:
         self.dlg.sb_simDur.setValue(24)
         # Sim name
         self.dlg.le_fullSimName.setText('New Simulation')
-        self.dlg.le_shortNameSim.setText('New Simulation')
         self.dlg.le_outputFolderSim.setText('')
         # model area
         self.dlg.le_inxForSim.setText('')
@@ -1607,7 +1652,7 @@ class Geo2ENVImet:
 
         self.dlg.sb_windspeed.setValue(1.50)
         self.dlg.sb_winddir.setValue(270.00)
-        self.dlg.sb_rlength.setValue(0.010)
+        self.dlg.sb_rlength.setValue(0.10)
         self.dlg.sb_lowclouds.setValue(0)
         self.dlg.sb_midclouds.setValue(0)
         self.dlg.sb_highclouds.setValue(0)
@@ -1624,7 +1669,7 @@ class Geo2ENVImet:
         self.dlg.rb_forcePrec_yes.setChecked(True)
         self.dlg.sb_constWS_FUFo.setValue(2.00)
         self.dlg.sb_constWD_FuFo.setValue(135.00)
-        self.dlg.sb_rlength_FuFo.setValue(0.010)
+        self.dlg.sb_rlength_FuFo.setValue(0.10)
         self.dlg.sb_initT.setValue(20.00)
         self.dlg.sb_lowclouds_2.setValue(0)
         self.dlg.sb_mediumclouds.setValue(0)
@@ -1647,21 +1692,7 @@ class Geo2ENVImet:
         self.dlg.sb_soilTbedrock.setValue(18.00)
 
         # Radiation
-        self.dlg.rb_fineRes.setChecked(True)
-        self.dlg.rb_yesHeightCap.setChecked(True)
-        self.dlg.sb_heightCap.setEnabled(True)
-        self.dlg.sb_heightCap.setValue(10)
-        self.dlg.rb_useIVSyes.setChecked(True)
-        self.dlg.cb_resHeightIVS.setEnabled(False)
-        self.dlg.cb_resAziIVS.setEnabled(False)
-        self.dlg.cb_resHeightIVS.setCurrentIndex(0)
-        self.dlg.cb_resAziIVS.setCurrentIndex(0)
-        self.dlg.cb_humanProjFac.setCurrentIndex(2)
-        self.dlg.rb_MRT2.setChecked(True)
-        self.dlg.rbACRTyes.setChecked(True)
-        self.dlg.sb_ACRTdays.setEnabled(True)
-        self.dlg.sb_ACRTdays.setValue(10)
-        self.dlg.sb_adjustFac.setValue(1.00)
+        self.dlg.cb_resIVS.setCurrentIndex(1)
 
         # Buildings
         self.dlg.sb_bldTmp.setValue(20.00)
@@ -1669,8 +1700,6 @@ class Geo2ENVImet:
         self.dlg.rb_indoorNo.setChecked(True)
 
         # Pollutants
-        self.dlg.rb_multiPollu.setChecked(True)
-        self.dlg.rb_activeChem.setChecked(True)
         self.dlg.sb_NO.setValue(0.00)
         self.dlg.sb_NO2.setValue(0.00)
         self.dlg.sb_ozone.setValue(0.00)
@@ -1683,23 +1712,6 @@ class Geo2ENVImet:
         self.dlg.sb_particleDens.setValue(1.00)
         self.dlg.gb_additionalMyPollu.setVisible(False)
 
-        # Plants
-        self.dlg.rb_leafTransUserDef.setChecked(True)
-        self.dlg.rb_TreeCalYes.setChecked(True)
-        self.dlg.sb_co2.setValue(450)
-
-        # Timing
-        self.dlg.sb_timingPlant.setValue(600)
-        self.dlg.sb_timingSurf.setValue(30)
-        self.dlg.sb_timingRad.setValue(600)
-        self.dlg.sb_timingFlow.setValue(900)
-        self.dlg.sb_timingEmission.setValue(600)
-        self.dlg.sb_t0.setValue(2.00)
-        self.dlg.sb_t1.setValue(2.00)
-        self.dlg.sb_t2.setValue(1.00)
-        self.dlg.sb_t0t1angle.setValue(40.00)
-        self.dlg.sb_t1t2angle.setValue(50.00)
-
         # Output
         self.dlg.cb_outputBldData.setCheckState(Qt.Checked)
         self.dlg.cb_outputRadData.setCheckState(Qt.Checked)
@@ -1708,11 +1720,6 @@ class Geo2ENVImet:
         self.dlg.sb_outputIntRecBld.setValue(30)
         self.dlg.sb_outputIntOther.setValue(60)
         self.dlg.rb_writeNetCDFNo.setChecked(True)
-        self.dlg.rb_NetCDFsingleFile.setChecked(True)
-        self.dlg.rb_NetCDFsaveAll.setChecked(True)
-        self.dlg.rb_InclNestingGridsNo.setChecked(True)
-        self.dlg.gb_NetCDFnumFiles.setEnabled(False)
-        self.dlg.gb_NetCDFSize.setEnabled(False)
 
         # Expert
         self.dlg.rb_newSOR.setChecked(True)
