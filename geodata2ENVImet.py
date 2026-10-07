@@ -1,9 +1,9 @@
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QThread, Qt, QDate, QTime
+from qgis.PyQt.QtCore import QLocale, QTranslator, QCoreApplication, QThread, Qt, QDate, QTime
 from qgis.PyQt import QtCore
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
 from qgis.core import (Qgis, QgsField, QgsMapLayerProxyModel, QgsVectorLayer,
-                       QgsFieldProxyModel, QgsRasterLayer)
+                       QgsFieldProxyModel, QgsRasterLayer, QgsSettings)
 
 # Initialize the bundled Qt resources (icons etc.); importing resources.py has
 # the side effect of calling qInitResources().
@@ -37,17 +37,24 @@ class Geo2ENVImet:
         self.iface = iface
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
-        # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
-        locale_path = os.path.join(
-            self.plugin_dir,
-            'i18n',
-            'Geo2ENVImet_{}.qm'.format(locale))
+        # initialize locale; 'locale/userLocale' is unset in a fresh QGIS profile
+        # (fix from PR #2 by Till Frankenbach, restored)
+        try:
+            locale = QgsSettings().value('locale/userLocale')
+            if not locale:
+                locale = QLocale().name()
+            locale = locale[0:2]
+            locale_path = os.path.join(
+                self.plugin_dir,
+                'i18n',
+                'Geo2ENVImet_{}.qm'.format(locale))
 
-        if os.path.exists(locale_path):
-            self.translator = QTranslator()
-            self.translator.load(locale_path)
-            QCoreApplication.installTranslator(self.translator)
+            if os.path.exists(locale_path):
+                self.translator = QTranslator()
+                self.translator.load(locale_path)
+                QCoreApplication.installTranslator(self.translator)
+        except TypeError:
+            pass
 
         # Declare instance attributes
         self.actions = []
@@ -767,10 +774,11 @@ class Geo2ENVImet:
         dialog = QMessageBox()
         dialog.setText('Do you really want to clear all settings?')
         dialog.setWindowTitle('Confirmation required!')
-        dialog.setIcon(QMessageBox.Warning)
-        dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        dialog.button(QMessageBox.Yes).setText("Yes")
-        dialog.button(QMessageBox.No).setText("No")
+        # scoped enums: PyQt6 (QGIS 4) has no QMessageBox.Yes etc.
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        dialog.button(QMessageBox.StandardButton.Yes).setText("Yes")
+        dialog.button(QMessageBox.StandardButton.No).setText("No")
         dialog.buttonClicked.connect(self.dialog_btn_clicked)
         dialog.exec()
 

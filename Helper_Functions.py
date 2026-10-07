@@ -56,7 +56,7 @@ def get_color_scale_mode():
         mode = QgsColorRampShader.EqualInterval
     elif C_COLOR_SCALE_MODE == 1:
         # Continuous
-        mode = QgsColorRampShader.Continous
+        mode = QgsColorRampShader.Continuous
     elif C_COLOR_SCALE_MODE == 2:
         # Quantile
         mode = QgsColorRampShader.Quantile

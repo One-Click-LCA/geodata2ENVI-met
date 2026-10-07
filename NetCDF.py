@@ -15,7 +15,8 @@ except ImportError:
     # first we try to install netCDF4 from online source
     from qgis.PyQt.QtWidgets import QMessageBox
     QMessageBox.warning(None, 'Missing Library for Geodata2ENVI-met plugin',
-                        "The Python library 'netCDF4' is required. It will now be installed. Please restart QGIS before using the plugin.", QMessageBox.Ok, QMessageBox.Ok)
+                        "The Python library 'netCDF4' is required. It will now be installed. Please restart QGIS before using the plugin.",
+                        QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok)
     import os
     if os.system("pip install netCDF4") == 0:
 
@@ -40,7 +41,8 @@ except ImportError:
         """
     else:
         QMessageBox.warning(None, 'Missing Library for Geodata2ENVI-met plugin',
-                            "The Python library 'netCDF4' is required. It should be installed automatically when you install the plugin while being online.", QMessageBox.Ok, QMessageBox.Ok)
+                            "The Python library 'netCDF4' is required. It should be installed automatically when you install the plugin while being online.",
+                            QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok)
 
 
 class NetCDF_Variable_Metadata:
