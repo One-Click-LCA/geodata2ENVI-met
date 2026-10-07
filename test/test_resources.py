@@ -16,21 +16,24 @@ import unittest
 
 from qgis.PyQt.QtGui import QIcon
 
+from .plugin_env import import_plugin_module, start_qgis
+
 
 class Geo2ENVImetDialogTest(unittest.TestCase):
     """Test rerources work."""
 
     def setUp(self):
         """Runs before each test."""
-        pass
+        start_qgis()
+        import_plugin_module('resources')
 
     def tearDown(self):
         """Runs after each test."""
         pass
 
     def test_icon_png(self):
-        """Test we can click OK."""
-        path = ':/plugins/Geo2ENVImet/icon.png'
+        """The plugin icon is in the compiled resources."""
+        path = ':/plugins/geodata2ENVImet/icon.png'
         icon = QIcon(path)
         self.assertFalse(icon.isNull())
 
