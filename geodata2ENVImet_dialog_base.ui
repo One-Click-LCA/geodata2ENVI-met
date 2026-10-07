@@ -6682,6 +6682,16 @@ p, li { white-space: pre-wrap; }
                      </property>
                     </widget>
                    </item>
+                   <item>
+                    <widget class="QPushButton" name="bt_areaStatistics">
+                     <property name="toolTip">
+                      <string>Statistics of the results over analysis areas (polygons), per time step</string>
+                     </property>
+                     <property name="text">
+                      <string>Area statistics...</string>
+                     </property>
+                    </widget>
+                   </item>
                   </layout>
                  </item>
                 </layout>

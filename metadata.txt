@@ -33,7 +33,7 @@ repository=https://github.com/One-Click-LCA/geodata2ENVI-met
 
 # Recommended items:
 
-hasProcessingProvider=no
+hasProcessingProvider=yes
 # Uncomment the following line and add your changelog:
 changelog= added the possibility to run microclimate simulations from QGIS and also visualize model results in QGIS
 

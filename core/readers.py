@@ -406,7 +406,11 @@ class NetcdfFile(ResultFile):
 def read_edx_header(path):
     """Tag -> text of an EDX header (first occurrence of each tag)."""
     with open(path, 'rb') as f:
-        text = f.read().decode('cp1252', errors='replace')
+        raw = f.read()
+    try:
+        text = raw.decode('utf-8')                 # current versions ('°C' as two bytes)
+    except UnicodeDecodeError:
+        text = raw.decode('cp1252', errors='replace')
     tags = {}
     for match in re.finditer(r'<([A-Za-z0-9_\-]+)>([^<]*)</\1>', text):
         tags.setdefault(match.group(1), match.group(2).strip())

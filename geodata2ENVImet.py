@@ -22,6 +22,7 @@ import subprocess
 import traceback
 from .Dataseries_handler import dataseries, STATE_COMPARABLE, STATE_ONLY_A, STATE_ONLY_B
 from .result_layers import Cutline, LayerRequest, ResultLayersTask
+from .processing_provider.provider import EnvimetProvider
 from .core import envimet_install
 from .core.forcing import diurnal_profile
 
@@ -99,8 +100,15 @@ class Geo2ENVImet:
         # will be set True in load_db()
         self.db_loaded = False
 
+        # Processing algorithms (area analysis)
+        self.provider = EnvimetProvider()
+        QgsApplication.processingRegistry().addProvider(self.provider)
+
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
+        if getattr(self, 'provider', None) is not None:
+            QgsApplication.processingRegistry().removeProvider(self.provider)
+            self.provider = None
         for action in self.actions:
             self.iface.removePluginMenu(
                 self.translate_phrase(u'&Geodata to ENVI-met'),
@@ -1028,10 +1036,11 @@ class Geo2ENVImet:
     def run(self):
         """Run method that performs all the real work"""
         self.setup_user_interface()
-        # show the dialog
+        # show the dialog without blocking QGIS, so layers can be edited (e.g. analysis areas
+        # digitised) while it is open
         self.dlg.show()
-        # Run the dialog event loop
-        self.dlg.exec()
+        self.dlg.raise_()
+        self.dlg.activateWindow()
 
     def setup_user_interface(self):
         # Create the dialog with elements (after translation) and keep reference
@@ -1060,6 +1069,24 @@ class Geo2ENVImet:
         self.dlg.chk_onlyComparable.clicked.connect(self.loadVariablesInUI)
         self.dlg.cb_sourceA.currentIndexChanged.connect(lambda: self.select_source('A'))
         self.dlg.cb_sourceB.currentIndexChanged.connect(lambda: self.select_source('B'))
+        self.dlg.bt_areaStatistics.clicked.connect(self.open_area_statistics)
+
+    def area_statistics_parameters(self):
+        """Parameters for the area statistics algorithm from the series chosen in the tab."""
+        parameters = {}
+        for series, results, source in (('A', 'RESULTS', 'SOURCE'), ('B', 'RESULTS_B', 'SOURCE_B')):
+            path_edit, source_box = self.series_widgets(series)
+            if path_edit.text():
+                parameters[results] = path_edit.text()
+                parameters[source] = source_box.currentText()
+        choice = dataseries.SelectedVariable
+        if choice is not None and choice.key_a is not None:
+            parameters['VARIABLES'] = choice.key_a
+        return parameters
+
+    def open_area_statistics(self):
+        import processing
+        processing.execAlgorithmDialog('envimet:areastatistics', self.area_statistics_parameters())
 
     def Select_all_A(self):
         if self.dlg.bt_Select_A.text() == 'Select All':

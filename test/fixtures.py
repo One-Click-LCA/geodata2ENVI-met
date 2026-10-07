@@ -156,7 +156,7 @@ def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitu
 
 
 def write_edx(folder, base='sim_AT_', stamp='2024-07-06_04.59.59', time_text='04.59.59', ring=2,
-              t_index=1, initialisation=False):
+              t_index=1, initialisation=False, encoding='utf-8'):
     """An atmosphere EDX/EDT pair with ``ring`` nesting cells on each side (EDX files up to ENVI-met 6.0)."""
     os.makedirs(folder, exist_ok=True)
     nx, ny = NX + 2 * ring, NY + 2 * ring
@@ -212,7 +212,7 @@ def write_edx(folder, base='sim_AT_', stamp='2024-07-06_04.59.59', time_text='04
 </ENVI-MET_Datafile>
 """
     path = os.path.join(folder, stem + '.EDX')
-    with open(path, 'w', encoding='cp1252') as f:
+    with open(path, 'w', encoding=encoding) as f:     # ENVI-met 6 writes UTF-8, older versions Windows-1252
         f.write(header)
     return path
 

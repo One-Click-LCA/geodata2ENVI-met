@@ -148,6 +148,11 @@ class EdxReaderTest(unittest.TestCase):
         self.assertIn('Objects', edx.variables)
         self.assertEqual(edx.variables['Air Temperature'].units, '°C')
 
+    def test_header_encodings(self):
+        for encoding in ('utf-8', 'cp1252'):
+            path = fx.write_edx(os.path.join(self.tmp, encoding), encoding=encoding)
+            self.assertEqual(self.r.EdxFile(path).variables['Air Temperature'].units, '°C')
+
     def test_same_values_as_netcdf(self):
         edx = self.r.EdxFile(self.edx)
         nc = self.r.NetcdfFile(self.nc)
