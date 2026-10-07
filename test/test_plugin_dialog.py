@@ -146,7 +146,14 @@ class LoadSimxTest(unittest.TestCase):
         dlg.sb_timeMaxT.setValue(15)
         self.plugin.update_temp_and_hum_simpleforcing()
         dlg.le_simxDest.setText(path)
-        import_plugin_module('Worker').Worker().save_simx(ui=dlg)
+        dlg.le_inxForSim.setText('area.INX')
+        self.plugin.simsettings_change()
+        self.plugin.installed_envimet_version = lambda: (6, 0, 0)
+        try:
+            self.plugin.save_simx_file()
+        finally:
+            del self.plugin.installed_envimet_version
+        self.assertEqual(self.plugin.iface.bar.messages, [])
 
         self.plugin.clear_settings_create_sim_tab()
         self.plugin.load_simx_file(path)
@@ -156,15 +163,16 @@ class LoadSimxTest(unittest.TestCase):
         self.assertEqual(dlg.le_fullSimName.text(), 'Courtyard')
         self.assertEqual((dlg.hs_maxT.value(), dlg.sb_timeMaxT.value()), (31, 15))
 
-    def test_json_simx_is_reported_not_frozen(self):
-        path = os.path.join(self.tmp, 'guide.simx')
+    def test_unreadable_simx_is_reported_not_frozen(self):
+        path = os.path.join(self.tmp, 'broken.simx')
         with open(path, 'w', encoding='utf-8') as f:
-            f.write('{"Header": {"filetype": "SIMX"}, "mainData": {"simName": "x"}}')
+            f.write('{"Header": {"filetype": "simConfJSON"}, "mainData": ')
         self.plugin.load_simx_file(path)
         self.assertTrue(self.plugin.dlg.tw_Main.isEnabled())
         self.assertEqual(len(self.plugin.iface.bar.messages), 1)
         self.assertIn('JSON', self.plugin.iface.bar.messages[0][1])
         self.assertEqual(self.plugin.dlg.lb_loadedSimx.text(), 'None')
+        self.assertIsNone(self.plugin.loaded_simx)
 
 
 if __name__ == '__main__':

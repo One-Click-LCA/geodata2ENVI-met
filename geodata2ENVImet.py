@@ -25,6 +25,8 @@ from .result_layers import Cutline, LayerRequest, ResultLayersTask
 from .processing_provider.provider import EnvimetProvider
 from .core import envimet_install
 from .core.forcing import diurnal_profile
+from .core import simx as core_simx
+from . import simx_ui
 
 
 class Geo2ENVImet:
@@ -79,6 +81,8 @@ class Geo2ENVImet:
 
         # declare class field for UI
         self.dlg = None
+        # the last loaded SIMX file; settings the UI does not show are written back unchanged
+        self.loaded_simx = None
 
         # status states
         self.generalSettings_states = ('No model area (*.INX) selected!', 'Invalid simulation name!', '')
@@ -734,32 +738,24 @@ class Geo2ENVImet:
             self.load_simx_file(filename[0])
 
     def load_simx_file(self, filepath):
-        # Loading writes to the widgets, so it runs here in the main thread (it only parses a
-        # small text file). Any failure resets the tab and reports it instead of leaving the
-        # dialog disabled.
+        # JSON (ENVI-met 5.9 and newer) or XML. Settings the tab does not show are kept for saving.
         self.clear_settings_create_sim_tab()
         try:
-            Worker().load_simx(ui=self.dlg, filepath=filepath)
+            simulation, _ = core_simx.read(filepath)
+            notes = simx_ui.ui_from_model(self.dlg, simulation)
+            self.loaded_simx = simulation
             self.after_simx_import(filepath)
         except Exception as error:
             QgsMessageLog.logMessage(f"Loading {filepath} failed:\n{traceback.format_exc()}",
                                      'ENVI-met', level=Qgis.MessageLevel.Warning)
             self.clear_settings_create_sim_tab()
             self.dlg.tw_Main.setEnabled(True)
-            if self.is_json_file(filepath):
-                text = ("This SIMX file is in the JSON format of ENVI-met 5.9.5 and newer, which the plugin "
-                        "can't load yet.")
-            else:
-                text = f"Could not load the settings of this SIMX file ({type(error).__name__}: {error})."
-            self.iface.messageBar().pushMessage("Error", text, level=Qgis.Warning)
-
-    @staticmethod
-    def is_json_file(filepath):
-        try:
-            with open(filepath, 'rb') as f:
-                return f.read(64).lstrip(b'\xef\xbb\xbf \t\r\n').startswith(b'{')
-        except OSError:
-            return False
+            self.iface.messageBar().pushMessage(
+                "Error", f"Could not load the settings of this SIMX file ({type(error).__name__}: {error}).",
+                level=Qgis.Warning)
+            return
+        for note in notes:
+            self.iface.messageBar().pushMessage("Info", note, level=Qgis.Info)
 
     def after_simx_import(self, filename):
         # check mandatory sections
@@ -1339,6 +1335,12 @@ class Geo2ENVImet:
 
         self.dlg.rb_simpleForcing.clicked.connect(self.select_forcing_mode)
         self.dlg.rb_fullForcing.clicked.connect(self.select_forcing_mode)
+        self.dlg.rb_other.clicked.connect(self.select_forcing_mode)
+
+        self.dlg.cb_naturalVentilation.currentIndexChanged.connect(self.update_indoor_page)
+        self.dlg.cb_indoorMode.currentIndexChanged.connect(self.update_indoor_page)
+        self.dlg.sb_indoorLower.valueChanged.connect(self.update_indoor_page)
+        self.dlg.sb_indoorUpper.editingFinished.connect(self.update_indoor_page)
 
         self.dlg.calendar_startDateSim.selectionChanged.connect(self.update_date)
 
@@ -1461,28 +1463,33 @@ class Geo2ENVImet:
             self.iface.messageBar().pushMessage("Error", "No output file location defined", level=Qgis.Warning)
             return
 
-        self.thread = QThread()
-        self.worker = Worker()
+        # JSON for ENVI-met 5.9 and newer (and when no installation is found), XML for older versions
+        version = self.installed_envimet_version()
+        json_format = core_simx.uses_json(version)
+        path = self.dlg.le_simxDest.text().strip()
+        try:
+            simulation = simx_ui.model_from_ui(self.dlg, base=self.loaded_simx, json_format=json_format)
+            if json_format:
+                core_simx.write_json(path, simulation)
+            else:
+                core_simx.write_xml(path, simulation, datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            self.iface.messageBar().pushMessage("Error", f"The SIMX file could not be written: {error}",
+                                                level=Qgis.Warning)
+            return
+        target = 'unknown ENVI-met version' if version is None else 'ENVI-met ' + '.'.join(str(v) for v in version)
+        self.dlg.lb_reportSave.setText(f"SIMX-file saved ({'JSON' if json_format else 'XML'} format, {target})")
 
-        # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
-        # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
-        self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-        # Connect signals and slots:
-        self.thread.started.connect(lambda: self.worker.save_simx(ui=self.dlg))
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
+    @staticmethod
+    def installed_envimet_version():
+        """(major, minor, patch) of the ENVI-met installation in the user settings, or None."""
+        settings = envimet_install.read_usersettings()
+        if settings is None or not settings.install_path:
+            return None
+        return envimet_install.read_installed_version(settings.install_path)
 
-        # disable GUI
-        self.dlg.tw_Main.setEnabled(False)
-        # enable GUI, when done
-        self.thread.finished.connect(self.after_simx_export)
-
-        self.thread.start()  # finally start the thread
-
-    def after_simx_export(self):
-        self.dlg.tw_Main.setEnabled(True)
-        self.dlg.lb_reportSave.setText('SIMX-file saved!')
+    def update_indoor_page(self):
+        simx_ui.update_indoor_page(self.dlg)
 
     def pollutants_ui_update(self):
         if (self.dlg.cb_userPolluType.currentIndex() == 1) or (self.dlg.cb_userPolluType.currentIndex() == 9):
@@ -1639,7 +1646,6 @@ class Geo2ENVImet:
         self.dlg.hs_minT.setValue(17)
         self.dlg.hs_maxHum.setValue(75)
         self.dlg.hs_minHum.setValue(45)
-        self.dlg.sb_specHum.setValue(8.00)
         self.update_temp_and_hum_simpleforcing()
 
         self.dlg.sb_windspeed.setValue(1.50)
@@ -1667,7 +1673,6 @@ class Geo2ENVImet:
         self.dlg.sb_mediumclouds.setValue(0)
         self.dlg.sb_highclouds_2.setValue(0)
         self.dlg.sb_relHum.setValue(50.00)
-        self.dlg.sb_specHum_2.setValue(8.00)
         self.dlg.stackedWidget_4.setCurrentIndex(0)
         self.dlg.stackedWidget_5.setCurrentIndex(1)
         self.dlg.stackedWidget_6.setCurrentIndex(0)
@@ -1678,18 +1683,18 @@ class Geo2ENVImet:
         self.dlg.sb_soilHumMiddle.setValue(70.00)
         self.dlg.sb_soilHumLower.setValue(75.00)
         self.dlg.sb_soilHumBedrock.setValue(75.00)
-        self.dlg.sb_soilTupper.setValue(20.00)
-        self.dlg.sb_soilTmiddle.setValue(20.00)
-        self.dlg.sb_soilTlower.setValue(19.00)
-        self.dlg.sb_soilTbedrock.setValue(18.00)
 
         # Radiation
         self.dlg.cb_resIVS.setCurrentIndex(1)
 
-        # Buildings
-        self.dlg.sb_bldTmp.setValue(20.00)
-        self.dlg.sb_bldSurfTmp.setValue(20.00)
-        self.dlg.rb_indoorNo.setChecked(True)
+        # Indoor climate (ENVI-met 6 defaults, as in ENVI-guide)
+        defaults = simx_ui.INDOOR_DEFAULTS
+        self.dlg.cb_naturalVentilation.setCurrentIndex(defaults['naturalVentilation'])
+        self.dlg.cb_indoorMode.setCurrentIndex(defaults['indoorMode'])
+        self.dlg.cb_indoorUse.setCurrentIndex(defaults['defaultBuildingUse'])
+        self.dlg.sb_indoorLower.setValue(defaults['indoorLowerC'])
+        self.dlg.sb_indoorUpper.setValue(defaults['indoorUpperC'])
+        self.update_indoor_page()
 
         # Pollutants
         self.dlg.sb_NO.setValue(0.00)
@@ -1714,13 +1719,10 @@ class Geo2ENVImet:
         self.dlg.rb_writeNetCDFNo.setChecked(True)
 
         # Expert
-        self.dlg.rb_newSOR.setChecked(True)
-        self.dlg.rb_DIN6946.setChecked(True)
         self.dlg.rb_threadingMain.setChecked(True)
-        self.dlg.rb_avgInflowNo.setChecked(True)
-        self.dlg.rb_avgInflowNo.setChecked(True)
-        self.dlg.cb_TKE.setCurrentIndex(3)
-        self.dlg.rb_tkeLimitY.setChecked(True)
+
+        # nothing loaded: a saved file only holds what the tab shows
+        self.loaded_simx = None
 
         # trigger update event for meteo-settings
         self.select_forcing_mode()

@@ -1,0 +1,112 @@
+{
+  "Header": {
+    "filetype": "simConfJSON",
+    "version": 1,
+    "remark": "",
+    "fileInfo": "Created in ENVI-Guide V5.9.5"
+  },
+  "mainData": {
+    "simName": "Road test",
+    "INXFile": "roadtest.inx",
+    "filebaseName": "Road test",
+    "outDir": "",
+    "startDate": "15.10.2025",
+    "startTime": "11:00:00",
+    "simDuration": 37,
+    "windSpeed": 2,
+    "windDir": 135,
+    "z0": 0.1,
+    "T_H": 293,
+    "Q_H": 8,
+    "Q_2m": 50,
+    "windLimit": 15,
+    "windAccuracy": 0
+  },
+  "TThread": {
+    "UseTThread_CallMain": false,
+    "TThreadPRIO": 4
+  },
+  "ModelTiming": {
+    "surfaceSteps": 30,
+    "flowSteps": 900,
+    "radiationSteps": 600,
+    "plantSteps": 600,
+    "sourcesSteps": 600
+  },
+  "Sources": {
+    "userPolluName": "My Pollutant",
+    "userPolluType": 1,
+    "userPartDiameter": 10,
+    "userPartDensity": 1,
+    "multipleSources": true,
+    "activeChem": true,
+    "isoprene": false
+  },
+  "Turbulence": {
+    "TKELimit": true,
+    "turbulenceModel": 3
+  },
+  "FullForcing": {
+    "fileName": "STATION",
+    "forceT": true,
+    "forceQ": true,
+    "forceWind": true,
+    "forcePrecip": false,
+    "forceRadClouds": true,
+    "forceBackgrConc": false,
+    "nudging": true,
+    "nudgingFactor": 1,
+    "verticalTAir": 0
+  },
+  "TimeSteps": {
+    "sunheight_step01": 40,
+    "sunheight_step02": 50,
+    "dt_step00": 2,
+    "dt_step01": 2,
+    "dt_step02": 1
+  },
+  "OutputSettings": {
+    "mainFiles": 30,
+    "textFiles": 30,
+    "netCDF": true,
+    "emailNotification": true,
+    "inclNestingGrids": false,
+    "writeAgents": false,
+    "writeAtmosphere": true,
+    "writeBuildings": true,
+    "writeObjects": false,
+    "writeGreenpass": false,
+    "writeNesting": false,
+    "writePollutants": true,
+    "writeRadiation": true,
+    "writeSoil": true,
+    "writeSolarAccess": true,
+    "writeVegetation": true,
+    "writeWindSectors": true
+  },
+  "Background": {
+    "userSpec": 0,
+    "NO": 0,
+    "NO2": 0,
+    "O3": 0,
+    "PM_10": 0,
+    "PM_2_5": 0
+  },
+  "Parallel": {
+    "CPUDemand": "ALL"
+  },
+  "SOR": {
+    "SORMode": 1
+  },
+  "InflowAvg": {
+    "NOInflowAvg": 1
+  },
+  "PlantModel": {
+    "CO2BackgroundPPM": 450,
+    "LeafTransmittance": false,
+    "TreeCalendar": true
+  },
+  "Facades": {
+    "FacadeMode": 1
+  }
+}
