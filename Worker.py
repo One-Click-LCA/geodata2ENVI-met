@@ -35,6 +35,7 @@ from .Const_defines import (C_NODATA_VALUE, C_SAMPLING_METHOD,
                             C_VECTORLAYER_TYPE_POINT, C_VECTORLAYER_TYPE_POLYGON,
                             FIELD_TYPE_INT, FIELD_TYPE_STRING)
 from .worker_helpers import get_UTM_zone, getQGIS_crs
+from .core.grid import raster_to_envimet_ij, raster_to_inx_receptor_cell
 
 
 class Building:
@@ -671,8 +672,7 @@ class Worker(QObject):
     # ==================================================================
     def raster_surface_from_vector(self):
         if self.surfLayer.name() == "notAvail":
-            tmpAr = np.empty(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill(self.startSurfID)
+            return np.full(shape=(self.JJ, self.II), fill_value=self.startSurfID, dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Surfaces...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -1194,8 +1194,7 @@ class Worker(QObject):
     # ==================================================================
     def raster_simple_plants_from_vector(self):
         if self.plant1dLayer.name() == "notAvail":
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Simple Plants...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -1324,7 +1323,8 @@ class Worker(QObject):
                         grid1_str_array[i, j] = ""
                     if grid1_int_array[i, j] == 999:
                         grid1_str_array[i, j] = self.plant3dID_custom
-                        newTree = dict(rootcell_i=j, rootcell_j=self.JJ - i, rootcell_k=0, plantID=str(self.plant3dID_custom),
+                        root_i, root_j = raster_to_envimet_ij(i, j, self.JJ)
+                        newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0, plantID=str(self.plant3dID_custom),
                                        name='Imported Plant', observe=0)
                         self.s_treeList.append(newTree)
         else:
@@ -1336,7 +1336,8 @@ class Worker(QObject):
                         tmpTree = aTmpDict.get(grid1_int_array[i, j])
                         if tmpTree is not None:
                             grid1_str_array[i, j] = tmpTree.enviID
-                            newTree = dict(rootcell_i=j, rootcell_j=self.JJ - i, rootcell_k=0,
+                            root_i, root_j = raster_to_envimet_ij(i, j, self.JJ)
+                            newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0,
                                            plantID=tmpTree.enviID.replace("NULL", ""), name='Imported Plant',
                                            observe=tmpTree.obs)
                             self.s_treeList.append(newTree)
@@ -1454,8 +1455,7 @@ class Worker(QObject):
     # ==================================================================
     def rasterSrcP(self):
         if self.srcPLayer.name() == "notAvail":
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
         QgsMessageLog.logMessage("Started: Gridding Sources (Points)...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
         # reproject to UTM
@@ -1521,8 +1521,7 @@ class Worker(QObject):
 
     def rasterSrcL(self):
         if self.srcLLayer.name() == "notAvail" or (self.srcLID_UseCustom and (self.srcLID_custom == "notAvail")):
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Sources (Lines)...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -1592,8 +1591,7 @@ class Worker(QObject):
 
     def rasterSrcA(self):
         if self.srcALayer.name() == "notAvail":
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Sources (Areas)...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -1724,7 +1722,8 @@ class Worker(QObject):
                     if grid1_int_array[i, j] == 999:
                         ENVI_ID_int = ENVI_ID_int + 1
                         grid1_str_array[i, j] = self.recID_custom + "{:04d}".format(ENVI_ID_int)
-                        newRec = dict(cell_i=j, cell_j=self.JJ - i, name=str(grid1_str_array[i, j]))
+                        cell_i, cell_j = raster_to_inx_receptor_cell(i, j, self.JJ)
+                        newRec = dict(cell_i=cell_i, cell_j=cell_j, name=str(grid1_str_array[i, j]))
                         self.s_recList.append(newRec)
         else:
             # invert dictionary
@@ -1735,7 +1734,8 @@ class Worker(QObject):
                         grid1_str_array[i, j] = ""
                     else:
                         grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-                        newRec = dict(cell_i=j, cell_j=self.JJ - i, name=str(grid1_str_array[i, j]))
+                        cell_i, cell_j = raster_to_inx_receptor_cell(i, j, self.JJ)
+                        newRec = dict(cell_i=cell_i, cell_j=cell_j, name=str(grid1_str_array[i, j]))
                         self.s_recList.append(newRec)
             aTmpDict.clear()
             invTmpDict.clear()
@@ -2059,7 +2059,7 @@ class Worker(QObject):
             building_mask = bNumber_int_array > 0
             simplePlant_str_array[building_mask] = ""
             i_idx, j_idx = np.where(building_mask)
-            blocked_cells = {(int(j), int(self.JJ - i)) for i, j in zip(i_idx, j_idx)}
+            blocked_cells = {raster_to_envimet_ij(int(i), int(j), self.JJ) for i, j in zip(i_idx, j_idx)}
             self.s_treeList = [
                 t for t in self.s_treeList
                 if (t.get("rootcell_i"), t.get("rootcell_j")) not in blocked_cells
@@ -2229,10 +2229,9 @@ class Worker(QObject):
 
             for tree in self.s_treeList:
                 print("  <3Dplants>", file=output_file)
-                print("    <rootcell_i> " + str(tree.get("rootcell_i") + 1) + " </rootcell_i>",
-                      file=output_file)  # the index is + 1 in envimet
-                print("    <rootcell_j> " + str(tree.get("rootcell_j")) + " </rootcell_j>",
-                      file=output_file)  # this index is correct in envimet
+                # 1-based, see core.grid
+                print("    <rootcell_i> " + str(tree.get("rootcell_i")) + " </rootcell_i>", file=output_file)
+                print("    <rootcell_j> " + str(tree.get("rootcell_j")) + " </rootcell_j>", file=output_file)
                 print("    <rootcell_k> " + str(tree.get("rootcell_k")) + " </rootcell_k>", file=output_file)
                 print("    <plantID> " + tree.get("plantID") + " </plantID>", file=output_file)
                 print("    <name> " + tree.get("name") + " </name>", file=output_file)
@@ -2260,8 +2259,9 @@ class Worker(QObject):
 
             for rec in self.s_recList:
                 print("  <Receptors>", file=output_file)
-                print("    <cell_i> " + str(rec.get("cell_i") + 1) + " </cell_i>", file=output_file)  # the index is + 1 in envimet
-                print("    <cell_j> " + str(rec.get("cell_j")) + " </cell_j>", file=output_file)  # this index is correct in envimet
+                # 0-based, unlike the 3D plants above; see core.grid
+                print("    <cell_i> " + str(rec.get("cell_i")) + " </cell_i>", file=output_file)
+                print("    <cell_j> " + str(rec.get("cell_j")) + " </cell_j>", file=output_file)
                 print("    <name> " + rec.get("name") + " </name>", file=output_file)
                 print("  </Receptors>", file=output_file)
 
