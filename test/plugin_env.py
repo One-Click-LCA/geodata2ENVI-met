@@ -94,6 +94,25 @@ class IfaceStub:
         pass
 
 
+class SlotErrors:
+    """Collect exceptions raised in Qt slots (PyQt hands them to sys.excepthook).
+
+    with SlotErrors() as errors:
+        button.click()
+    assert errors == []
+    """
+
+    def __enter__(self):
+        self.errors = []
+        self._hook = sys.excepthook
+        sys.excepthook = lambda kind, value, tb: self.errors.append(f'{kind.__name__}: {value}')
+        return self.errors
+
+    def __exit__(self, *exc):
+        sys.excepthook = self._hook
+        return False
+
+
 def make_plugin():
     """Create the plugin object with its dialog built, as QGIS does on the first click."""
     start_qgis()

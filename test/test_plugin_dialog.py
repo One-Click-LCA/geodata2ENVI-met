@@ -1,9 +1,12 @@
 # coding=utf-8
 """The plugin object and its dialog: start-up and simple UI handlers."""
 
+import os
+import shutil
+import tempfile
 import unittest
 
-from .plugin_env import IfaceStub, import_plugin_module, make_plugin, start_qgis
+from .plugin_env import IfaceStub, SlotErrors, import_plugin_module, make_plugin, start_qgis
 
 
 class _EmptySettings:
@@ -44,6 +47,106 @@ class DialogHandlersTest(unittest.TestCase):
         finally:
             QMessageBox.exec = original
         self.assertEqual(shown, ['Do you really want to clear all settings?'])
+
+    def test_netcdf_radio_buttons(self):
+        """The NetCDF yes/no buttons used to raise on every click (B4)."""
+        dlg = self.plugin.dlg
+        dlg.tab_Output.setEnabled(True)
+        with SlotErrors() as errors:
+            dlg.rb_writeNetCDFyes.click()
+            dlg.rb_writeNetCDFNo.click()
+        self.assertEqual(errors, [])
+
+
+class SimpleForcingTableTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = make_plugin()
+
+    def setUp(self):
+        self.plugin.clear_settings_create_sim_tab()
+        self.plugin.iface.bar.messages.clear()
+
+    def table(self, hour):
+        t = self.plugin.dlg.tableWidget
+        return [t.item(hour, 0).text(), t.item(hour, 1).text()]
+
+    def set_extremes(self, t_min_hour, t_max_hour, h_min_hour, h_max_hour):
+        dlg = self.plugin.dlg
+        dlg.sb_timeMinT.setValue(t_min_hour)
+        dlg.sb_timeMaxT.setValue(t_max_hour)
+        dlg.sb_timeMinHum.setValue(h_min_hour)
+        dlg.sb_timeMaxHum.setValue(h_max_hour)
+        self.plugin.update_temp_and_hum_simpleforcing()
+
+    def test_default_profile(self):
+        # defaults: T 17 degC at 05:00, 28 degC at 16:00; rel. humidity 75 % at 05:00, 45 % at 16:00
+        self.assertEqual(self.table(0), ['21.23', '63.46'])
+        self.assertEqual(self.table(1), ['20.38', '65.77'])
+        self.assertEqual(self.table(5), ['17.0', '75.0'])
+        self.assertEqual(self.table(16), ['28.0', '45.0'])
+
+    def test_humidity_falls_back_over_its_own_night(self):
+        """M5: with the humidity maximum after its minimum, the night used the temperature hours."""
+        dlg = self.plugin.dlg
+        dlg.hs_minHum.setValue(40)
+        dlg.hs_maxHum.setValue(80)
+        self.set_extremes(5, 16, 4, 14)
+        # 14:00 -> 04:00 (next day) is 14 hours, so 40 % per 14 h
+        self.assertEqual(self.table(14)[1], '80.0')
+        self.assertEqual(self.table(15)[1], str(round(80 - 40 / 14, 2)))
+        self.assertEqual(self.table(4)[1], '40.0')
+
+    def test_equal_hours_are_reported(self):
+        before = self.table(10)
+        self.set_extremes(10, 10, 5, 16)
+        self.assertEqual(self.table(10), before)
+        self.assertEqual(len(self.plugin.iface.bar.messages), 1)
+
+
+class LoadSimxTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = make_plugin()
+        cls.tmp = tempfile.mkdtemp(prefix='g2e_simx_')
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        self.plugin.clear_settings_create_sim_tab()
+        self.plugin.iface.bar.messages.clear()
+
+    def test_round_trip_of_a_plugin_simx(self):
+        dlg = self.plugin.dlg
+        path = os.path.join(self.tmp, 'roundtrip.simx')
+        dlg.le_fullSimName.setText('Courtyard')
+        dlg.hs_maxT.setValue(31)
+        dlg.sb_timeMaxT.setValue(15)
+        self.plugin.update_temp_and_hum_simpleforcing()
+        dlg.le_simxDest.setText(path)
+        import_plugin_module('Worker').Worker().save_simx(ui=dlg)
+
+        self.plugin.clear_settings_create_sim_tab()
+        self.plugin.load_simx_file(path)
+        self.assertEqual(self.plugin.iface.bar.messages, [])
+        self.assertTrue(dlg.tw_Main.isEnabled())
+        self.assertEqual(dlg.lb_loadedSimx.text(), path)
+        self.assertEqual(dlg.le_fullSimName.text(), 'Courtyard')
+        self.assertEqual((dlg.hs_maxT.value(), dlg.sb_timeMaxT.value()), (31, 15))
+
+    def test_json_simx_is_reported_not_frozen(self):
+        path = os.path.join(self.tmp, 'guide.simx')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('{"Header": {"filetype": "SIMX"}, "mainData": {"simName": "x"}}')
+        self.plugin.load_simx_file(path)
+        self.assertTrue(self.plugin.dlg.tw_Main.isEnabled())
+        self.assertEqual(len(self.plugin.iface.bar.messages), 1)
+        self.assertIn('JSON', self.plugin.iface.bar.messages[0][1])
+        self.assertEqual(self.plugin.dlg.lb_loadedSimx.text(), 'None')
 
 
 if __name__ == '__main__':

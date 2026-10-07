@@ -19,8 +19,10 @@ from qgis.PyQt import QtWidgets
 from qgis.PyQt.QtWidgets import QMessageBox, QListWidgetItem
 import os
 import subprocess
+import traceback
 from .Dataseries_handler import dataseries
 from .core import envimet_install
+from .core.forcing import diurnal_profile
 
 
 class Geo2ENVImet:
@@ -717,26 +719,35 @@ class Geo2ENVImet:
         if filename[0] == "":
             self.dlg.lb_loadedSimx.setText("None")
         else:
+            self.load_simx_file(filename[0])
+
+    def load_simx_file(self, filepath):
+        # Loading writes to the widgets, so it runs here in the main thread (it only parses a
+        # small text file). Any failure resets the tab and reports it instead of leaving the
+        # dialog disabled.
+        self.clear_settings_create_sim_tab()
+        try:
+            Worker().load_simx(ui=self.dlg, filepath=filepath)
+            self.after_simx_import(filepath)
+        except Exception as error:
+            QgsMessageLog.logMessage(f"Loading {filepath} failed:\n{traceback.format_exc()}",
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
             self.clear_settings_create_sim_tab()
+            self.dlg.tw_Main.setEnabled(True)
+            if self.is_json_file(filepath):
+                text = ("This SIMX file is in the JSON format of ENVI-met 5.9.5 and newer, which the plugin "
+                        "can't load yet.")
+            else:
+                text = f"Could not load the settings of this SIMX file ({type(error).__name__}: {error})."
+            self.iface.messageBar().pushMessage("Error", text, level=Qgis.Warning)
 
-            self.thread = QThread()
-            self.worker = Worker()
-
-            # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
-            # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
-            self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-            # Connect signals and slots
-            self.thread.started.connect(lambda: self.worker.load_simx(ui=self.dlg, filepath=filename[0]))
-            self.worker.finished.connect(self.thread.quit)
-            self.worker.finished.connect(self.worker.deleteLater)
-            self.thread.finished.connect(self.thread.deleteLater)
-
-            # disable GUI
-            self.dlg.tw_Main.setEnabled(False)
-            # enable GUI, when done
-            self.thread.finished.connect(lambda: self.after_simx_import(filename[0]))
-
-            self.thread.start()  # finally start the thread
+    @staticmethod
+    def is_json_file(filepath):
+        try:
+            with open(filepath, 'rb') as f:
+                return f.read(64).lstrip(b'\xef\xbb\xbf \t\r\n').startswith(b'{')
+        except OSError:
+            return False
 
     def after_simx_import(self, filename):
         # check mandatory sections
@@ -749,12 +760,8 @@ class Geo2ENVImet:
         elif self.dlg.rb_fullForcing.isChecked():
             self.fufo_manual_settings_display()
         # update optional UI sections
-        if self.dlg.chk_radiationSim.isChecked():
-            self.radiation_ui_update()
         if self.dlg.chk_pollutantsSim.isChecked():
             self.pollutants_ui_update()
-        if self.dlg.chk_outputSim.isChecked():
-            self.output_ui_update()
         # enable UI
         self.dlg.tw_Main.setEnabled(True)
         self.dlg.lb_loadedSimx.setText(filename)
@@ -1306,9 +1313,6 @@ class Geo2ENVImet:
 
         self.dlg.cb_userPolluType.currentIndexChanged.connect(self.pollutants_ui_update)
 
-        self.dlg.rb_writeNetCDFyes.clicked.connect(self.output_ui_update)
-        self.dlg.rb_writeNetCDFNo.clicked.connect(self.output_ui_update)
-
         # conncect buttons to run simulation
         self.dlg.bt_selectSIMX.clicked.connect(self.select_simx)
         self.dlg.bt_selectProj.clicked.connect(self.select_proj)
@@ -1430,14 +1434,6 @@ class Geo2ENVImet:
     def after_simx_export(self):
         self.dlg.tw_Main.setEnabled(True)
         self.dlg.lb_reportSave.setText('SIMX-file saved!')
-
-    def output_ui_update(self):
-        if self.dlg.rb_writeNetCDFyes.isChecked():
-            self.dlg.gb_NetCDFnumFiles.setEnabled(True)
-            self.dlg.gb_NetCDFSize.setEnabled(True)
-        else:
-            self.dlg.gb_NetCDFnumFiles.setEnabled(False)
-            self.dlg.gb_NetCDFSize.setEnabled(False)
 
     def pollutants_ui_update(self):
         if (self.dlg.cb_userPolluType.currentIndex() == 1) or (self.dlg.cb_userPolluType.currentIndex() == 9):
@@ -1681,131 +1677,21 @@ class Geo2ENVImet:
         self.select_forcing_mode()
 
     def update_temp_and_hum_simpleforcing(self):
-        # linear interpolation
-        time_Tmax = self.dlg.sb_timeMaxT.value()
-        time_Tmin = self.dlg.sb_timeMinT.value()
-        time_Hmax = self.dlg.sb_timeMaxHum.value()
-        time_Hmin = self.dlg.sb_timeMinHum.value()
-        maxT = self.dlg.hs_maxT.value()
-        minT = self.dlg.hs_minT.value()
-        maxH = self.dlg.hs_maxHum.value()
-        minH = self.dlg.hs_minHum.value()
-
-        timeDiff_minToMaxT = abs(time_Tmax - time_Tmin)
-        valDiff_minToMaxT = abs(maxT - minT)
-        ratio_T_intraday = valDiff_minToMaxT / timeDiff_minToMaxT
-        if time_Tmax > time_Tmin:
-            ratio_T_overnight = valDiff_minToMaxT / (24 - time_Tmax + time_Tmin)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxT + 1):
-                val = str(round(minT + j * ratio_T_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Tmin)
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # max to midnight
-            cnt = 1
-            for j in range(time_Tmax + 1, 24):
-                val = str(round(maxT - cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # min downto midnight
-            cnt = 1
-            for j in range(time_Tmin - 1, -1, -1):
-                val = str(round(minT + cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-        else:
-            ratio_T_overnight = valDiff_minToMaxT / (24 - time_Tmin + time_Tmax)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxT + 1):
-                val = str(round(maxT - j * ratio_T_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Tmax)
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # min to midnight
-            cnt = 1
-            for j in range(time_Tmin + 1, 24):
-                val = str(round(minT + cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # max downto midnight
-            cnt = 1
-            for j in range(time_Tmax - 1, -1, -1):
-                val = str(round(maxT - cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-
-        timeDiff_minToMaxH = abs(time_Hmax - time_Hmin)
-        valDiff_minToMaxH = abs(maxH - minH)
-        ratio_H_intraday = valDiff_minToMaxH / timeDiff_minToMaxH
-        if time_Hmax > time_Hmin:
-            ratio_H_overnight = valDiff_minToMaxH / (24 - time_Tmax + time_Tmin)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxH + 1):
-                val = str(round(minH + j * ratio_H_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Hmin) + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # max to midnight
-            cnt = 1
-            for j in range(time_Hmax + 1, 24):
-                val = str(round(maxH - cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # min downto midnight
-            cnt = 1
-            for j in range(time_Hmin - 1, -1, -1):
-                val = str(round(minH + cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-        else:
-            ratio_H_overnight = valDiff_minToMaxH / (24 - time_Hmin + time_Hmax)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxH + 1):
-                val = str(round(maxH - j * ratio_H_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Hmax) + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # min to midnight
-            cnt = 1
-            for j in range(time_Hmin + 1, 24):
-                val = str(round(minH + cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # max downto midnight
-            cnt = 1
-            for j in range(time_Hmax - 1, -1, -1):
-                val = str(round(maxH - cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
+        # linear interpolation between the daily extremes; table row = hour, column 0 = T, 1 = rel. humidity
+        try:
+            temperature = diurnal_profile(self.dlg.sb_timeMinT.value(), self.dlg.sb_timeMaxT.value(),
+                                          self.dlg.hs_minT.value(), self.dlg.hs_maxT.value())
+            humidity = diurnal_profile(self.dlg.sb_timeMinHum.value(), self.dlg.sb_timeMaxHum.value(),
+                                       self.dlg.hs_minHum.value(), self.dlg.hs_maxHum.value())
+        except ValueError:
+            self.iface.messageBar().pushMessage(
+                "Error", "Simple forcing: the minimum and the maximum of air temperature and of humidity "
+                         "must be at different times of day.", level=Qgis.Warning)
+            return
+        for hour in range(24):
+            for column, values in ((0, temperature), (1, humidity)):
+                item = QtWidgets.QTableWidgetItem(str(round(values[hour], 2)))
+                self.dlg.tableWidget.setItem(hour, column, item)
 
     def setup_ui_export_layers_tab(self):
         # include coordinate-reference-system of a layer in the combo-box text
