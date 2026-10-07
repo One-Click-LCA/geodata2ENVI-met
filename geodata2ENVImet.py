@@ -3,7 +3,7 @@ from qgis.PyQt import QtCore
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
 from qgis.core import (Qgis, QgsField, QgsMapLayerProxyModel, QgsVectorLayer,
-                       QgsFieldProxyModel, QgsRasterLayer, QgsSettings)
+                       QgsFieldProxyModel, QgsRasterLayer, QgsSettings, QgsMessageLog)
 
 # Initialize the bundled Qt resources (icons etc.); importing resources.py has
 # the side effect of calling qInitResources().
@@ -20,6 +20,7 @@ from qgis.PyQt.QtWidgets import QMessageBox, QListWidgetItem
 import os
 import subprocess
 from .Dataseries_handler import dataseries
+from .core import envimet_install
 
 
 class Geo2ENVImet:
@@ -1331,121 +1332,61 @@ class Geo2ENVImet:
             self.iface.messageBar().pushMessage("Error", "No project-folder selected", level=Qgis.Warning)
             return
 
-        # find the workspace path and the installation path automatically
-        usersettings = os.getenv('APPDATA').replace('\\', '/') + '/ENVI-met/usersettings.setx'
-        if os.path.exists(usersettings):
-            userpathinfo = ''
-            workspace = ''
-
-            settings = open(usersettings, 'br')
-            for row in settings:
-                row = row.decode('ansi')
-                if '<absolute_path>' in row:
-                    workspace = row.split(">", 1)[1].split("<", 1)[0].replace(' ', '').replace('\\', '/')
-                if ('<userpathinfo>' in row) and ('</userpathinfo>' in row):
-                    userpathinfo = row.split(">", 1)[1].split("<", 1)[0].replace(' ', '').replace('\\', '/')
-            settings.close()
-
-            if not userpathinfo == '':
-                installPath = userpathinfo.replace("sys.userdata", "")
-            else:
-                self.iface.messageBar().pushMessage("Error", "No ENVI-met installation found!", level=Qgis.Warning)
-                return
-
-            if workspace == '':
-                self.iface.messageBar().pushMessage("Error", "No ENVI-met workspace found!", level=Qgis.Warning)
-                return
-        else:
+        # find the workspace and the installation from ENVI-met's user settings
+        settings = envimet_install.read_usersettings()
+        if (settings is None) or (settings.install_path == ''):
             self.iface.messageBar().pushMessage("Error", "No ENVI-met installation found!", level=Qgis.Warning)
             return
+        if settings.workspace == '':
+            self.iface.messageBar().pushMessage("Error", "No ENVI-met workspace found!", level=Qgis.Warning)
+            return
+        envicore_path = envimet_install.console_exe(settings.install_path)
+        if not os.path.isfile(envicore_path):
+            self.iface.messageBar().pushMessage("Error", f"ENVI-met console not found: {envicore_path}",
+                                                level=Qgis.Warning)
+            return
 
-        envicore_path = installPath.replace('\\', '/') + 'win64/envicore_console.exe'
-
-        # print(envicore_path)
         # get selected project folder and simx-file
-        projectFolder = self.dlg.lb_selected_projFolder.text().replace('\\', '/')
-        simx_file = self.dlg.lb_simxFile.text().replace('\\', '/')
+        projectFolder = self.dlg.lb_selected_projFolder.text().strip()
+        simx_file = self.dlg.lb_simxFile.text().strip()
 
-        # check if there is a project.infoX inside this folder
-        my_project_name = ''
-        if os.path.exists(projectFolder + '/project.infoX'):
-            info_file = open(projectFolder + '/project.infoX')  # , 'br')
-            '''
-            # old code -> with the new scenarios this does not work anymore
-            for row in info_file:
-                row = row.decode('ansi')
-                if '<name>' in row:
-                    my_project_name = row.split(">", 1)[1].split("<", 1)[0].strip()
-            '''
-            startRow = 0
-            endRow = 0
-            rowI = 0
-            textList = []
-            for row in info_file:
-                # row = row.decode('ansi')
-                if '<project_description>' in row:
-                    startRow = rowI
-                if '</project_description>' in row:
-                    endRow = rowI
-                rowI += 1
-                textList.append(row.strip())
-            # print(startRow)
-            # print(endRow)
-            # info_file.close()
-            # info_file = open(projectFolder + '/project.infoX')
-            # content = info_file.readlines()
-            for a in range(startRow, endRow):
-                # print(textList[a])
-                if '<name>' in textList[a]:
-                    my_project_name = textList[a].split(">", 1)[1].split("<", 1)[0].strip()
-
-            # print(my_project_name)
-            info_file.close()
-        if my_project_name != '':
-            if projectFolder in simx_file:
-                simx_file = simx_file.replace(projectFolder + '/', '')
-            else:
-                self.iface.messageBar().pushMessage("Error",
-                                                    "The simulation-file (*.SIMX) is not inside the selected ENVI-met project-folder",
-                                                    level=Qgis.Warning)
-                return
-
-            if workspace in projectFolder:
-                projectFolder = projectFolder.replace(workspace + '/', '')
-            else:
-                self.iface.messageBar().pushMessage("Error",
-                                                    "The selected project-folder is not inside your ENVI-met workspace",
-                                                    level=Qgis.Warning)
-                return
-            # print(f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # command = f'{envicore_path} {workspace} {my_project_name} {simx_file}'
-            # os.system("cmd /c D:/ENVImet560a/win64/envicore.exe")
-            # program = "D:\ENVImet560a\win64\Leonardo.exe"
-            # = subprocess.Popen(program, shell=True)
-            # print(pID)
-            # subprocess.run(['D:/ENVImet560a/win64/envicore.exe', ''])
-            # os.system("cmd /c {command}")
-            # subprocess.run(["start", "/wait", "cmd", "/K", command, "arg /?\^"], shell=True)
-            # os.system('start /wait cmd /c ' + f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # envicore_path = envicore_path.replace('envicore_console.exe', 'core.exe')
-            # print(envicore_path)
-            # print(f'SIMX-file: {simx_file}" ' f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # orig: replaced with secure subprocess call
-            if os.name == 'nt':  # Check if running on Windows
-                subprocess.Popen(
-                    [envicore_path, workspace, my_project_name, simx_file],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE
-                )
-            else:  # Fallback for non-Windows environments
-                subprocess.Popen([envicore_path, workspace, my_project_name, simx_file])
-            # print(f'SIMX-file: {simx_file}" ' f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # command = f'{envicore_path} {workspace} {my_project_name} {simx_file}'
-            # os.system("start /wait cmd /c {command}")
-        else:
+        # the project is found by the name in its project.infoX, not by its folder name
+        my_project_name = envimet_install.read_project_name(projectFolder)
+        if my_project_name == '':
             self.iface.messageBar().pushMessage("Error",
                                                 "Could not find a project.infoX file inside folder. Are you sure the selected folder is a valid ENVI-met project-folder",
                                                 level=Qgis.Warning)
             return
+        if not envimet_install.is_inside(simx_file, projectFolder):
+            self.iface.messageBar().pushMessage("Error",
+                                                "The simulation-file (*.SIMX) is not inside the selected ENVI-met project-folder",
+                                                level=Qgis.Warning)
+            return
+        if not envimet_install.is_inside(projectFolder, settings.workspace):
+            self.iface.messageBar().pushMessage("Error",
+                                                "The selected project-folder is not inside your ENVI-met workspace",
+                                                level=Qgis.Warning)
+            return
+
+        # ENVI-met >= 5.9.5 takes -key=value arguments, older versions positional ones
+        version = envimet_install.read_installed_version(settings.install_path)
+        command = envimet_install.build_console_command(
+            install_path=settings.install_path, workspace=settings.workspace, project_name=my_project_name,
+            simx_file=envimet_install.relative_to(simx_file, projectFolder), version=version)
+        if version is None:
+            QgsMessageLog.logMessage("Could not read the ENVI-met version from sys.basedata/vctrl.edbx; "
+                                     "starting the simulation with -key=value arguments.",
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
+        version_text = 'unknown' if version is None else '.'.join(str(v) for v in version)
+        QgsMessageLog.logMessage(f"Starting ENVI-met {version_text}: {subprocess.list2cmdline(command)}",
+                                 'ENVI-met', level=Qgis.MessageLevel.Info)
+        try:
+            if os.name == 'nt':  # Check if running on Windows
+                subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:  # Fallback for non-Windows environments
+                subprocess.Popen(command)
+        except OSError as error:
+            self.iface.messageBar().pushMessage("Error", f"Could not start ENVI-met: {error}", level=Qgis.Warning)
 
     def select_simx(self):
         filename = QFileDialog.getOpenFileName(
