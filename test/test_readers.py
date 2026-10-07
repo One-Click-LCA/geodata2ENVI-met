@@ -70,6 +70,11 @@ class NetcdfReaderTest(unittest.TestCase):
             # the old layout stores 0.9994 h: both read as 05:00
             self.assertEqual(nc.times, [dt.datetime(2024, 7, 6, 4, 0), dt.datetime(2024, 7, 6, 5, 0)])
 
+    def test_southern_hemisphere_epsg(self):
+        # the crs variable of the fixture says EPSG:32633, the latitude says south: the latitude wins
+        path = fx.write_netcdf(os.path.join(self.tmp, 'south', 'sim_001.nc'), latitude=-33.9)
+        self.assertEqual(self.open(path).grid.epsg, 32733)
+
     def test_variables_by_short_name(self):
         nc = self.open(self.current)
         # coordinates are not data; variables with a shared long name are both there

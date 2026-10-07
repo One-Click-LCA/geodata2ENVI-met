@@ -234,13 +234,11 @@ class NetcdfFile(ResultFile):
             dz = self._dz_from_centres(np.array(ds.variables['GridsK'][:], dtype=float))
         else:
             dz = None
-        epsg = None
-        if 'crs' in ds.variables and 'epsg_code' in ds.variables['crs'].ncattrs():
-            match = re.search(r'(\d+)$', str(ds.variables['crs'].getncattr('epsg_code')))
-            epsg = int(match.group(1)) if match else None
+        # The EPSG code follows from zone and latitude, as in ENVI-met's NetCDF writer. The crs
+        # variable's epsg_code is not used: files converted from EDX say 326xx in both hemispheres.
         self.grid = Grid(dx=dx, dy=dy, x0=ds.getncattr('GeorefX'), y0=ds.getncattr('GeorefY'),
                          rotation=ds.getncattr('ModelRotation'), utm_zone=ds.getncattr('UTMZone'),
-                         latitude=ds.getncattr('LocationLatitude'), dz=dz, epsg=epsg)
+                         latitude=ds.getncattr('LocationLatitude'), dz=dz)
 
         start = parse_date_time(ds.getncattr('SimulationDate'), ds.getncattr('SimulationTime'))
         if 'Time' in ds.variables:
