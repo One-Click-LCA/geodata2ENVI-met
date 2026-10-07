@@ -296,6 +296,17 @@ class NetcdfFile(ResultFile):
         return (np.array(self._ds.variables['utm_easting'][:], dtype=float),
                 np.array(self._ds.variables['utm_northing'][:], dtype=float))
 
+    def placement_error(self):
+        """Largest distance (m) between the grid's cell midpoints and the file's own UTM midpoints.
+
+        None for files without 2D UTM fields.
+        """
+        if not self.has_utm_fields():
+            return None
+        east, north = self.utm_fields()
+        grid_east, grid_north = self.grid.cell_centres()
+        return float(np.hypot(grid_east - east, grid_north - north).max())
+
     def dem_offset(self, time_index=0):
         if time_index in self._dem_cache:
             return self._dem_cache[time_index]

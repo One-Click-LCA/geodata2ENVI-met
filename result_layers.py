@@ -23,6 +23,9 @@ from .core.readers import open_result_file
 
 _OUTPUT_FOLDER = None
 
+# metres between computed cell midpoints and the ones a NetCDF file stores before warning
+PLACEMENT_TOLERANCE = 0.01
+
 
 def output_folder():
     """Folder for the GeoTIFFs of this QGIS session."""
@@ -115,6 +118,11 @@ class ResultLayersTask(QgsTask):
         if result is None:
             result = open_result_file(path)
             self._files[path] = result
+            error = result.placement_error() if hasattr(result, 'placement_error') else None
+            if error is not None and error > PLACEMENT_TOLERANCE:
+                QgsMessageLog.logMessage(
+                    f'{path}: the layer is placed up to {error:.2f} m away from the cell midpoints stored in '
+                    f'the file (Lat/Lon/UTM fields).', 'ENVI-met', level=Qgis.MessageLevel.Warning)
         data, level = result.read(key, index, height)
         return data, result.grid, level
 

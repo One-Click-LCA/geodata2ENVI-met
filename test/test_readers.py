@@ -110,6 +110,8 @@ class NetcdfReaderTest(unittest.TestCase):
         grid_east, grid_north = nc.grid.cell_centres()
         self.assertLess(np.abs(grid_east - east).max(), 1e-6)
         self.assertLess(np.abs(grid_north - north).max(), 1e-6)
+        self.assertLess(nc.placement_error(), 1e-6)
+        self.assertIsNone(self.open(self.old).placement_error())
         # the geotransform maps pixel centres (north-up rows) to the same points
         gt = nc.grid.geotransform()
         for j, i in ((0, 0), (fx.NY - 1, fx.NX - 1), (2, 4)):
