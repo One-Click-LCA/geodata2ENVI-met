@@ -224,6 +224,27 @@ class RealOutputsTest(unittest.TestCase):
                 source.close()
         print(f'\n  placement checked in {checked} NetCDF files')
 
+    def test_pedestrian_rule_matches_znodebiomet(self):
+        """From 5.9.5 on, ENVI-met's biomet level is the terrain-following rule in every column."""
+        zones = import_plugin_module('core.zones')
+        checked = 0
+        for output in self.outputs:
+            for source in self.r.find_sources(output):
+                if source.name != 'NetCDF':
+                    continue
+                nc = source.first_file()
+                if nc is None or (nc.model_version() or (0,)) < (5, 9, 5):
+                    source.close()
+                    continue
+                static = nc.static_fields()
+                if static.reported_biomet_k is not None:
+                    rule = zones.pedestrian_levels(static.dem, static.dz)
+                    with self.subTest(output=output):
+                        np.testing.assert_array_equal(rule, static.reported_biomet_k)
+                    checked += 1
+                source.close()
+        print(f'\n  pedestrian level checked in {checked} NetCDF files')
+
     def test_edx_matches_netcdf(self):
         checked = 0
         for output in self.outputs:

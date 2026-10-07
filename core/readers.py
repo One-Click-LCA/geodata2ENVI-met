@@ -198,6 +198,22 @@ class ResultFile:
         """Number of terrain cells below the first atmosphere cell, (ny, nx)."""
         raise NotImplementedError
 
+    def read_cells(self, key, time_index, j, i, k=None):
+        """Values of a variable at cells (j, i) and, for 3D variables, levels k; NaN where missing."""
+        raise NotImplementedError
+
+    def static_fields(self):
+        """StaticFields (terrain, objects, pedestrian level) for area masks; see core.zones."""
+        raise NotImplementedError
+
+    def _air_2d(self):
+        """Where a 2D-only file has values at its first time step (buildings are -999)."""
+        keys = [key for key, v in self.variables.items() if v.kind == KIND_2D and key != 'Objects']
+        if not keys:
+            return None
+        data, _ = self.read(keys[0], 0)
+        return ~np.isnan(data)
+
     def _terrain_following(self, read_levels, time_index, height):
         """Read a 3D variable at ``height`` above ground with ``read_levels(k0, k1) -> (k1-k0, ny, nx)``."""
         k, (bottom, top) = level_for_height(self.grid.dz, height)
@@ -294,6 +310,15 @@ class NetcdfFile(ResultFile):
         return (np.array(self._ds.variables['utm_easting'][:], dtype=float),
                 np.array(self._ds.variables['utm_northing'][:], dtype=float))
 
+    def model_version(self):
+        """(major, minor, patch) of the ENVI-met version that wrote the file, or None."""
+        if 'ModelVersion' not in self._ds.ncattrs():
+            return None
+        match = re.search(r'V(\d+)\.(\d+)(?:\.(\d+))?', str(self._ds.getncattr('ModelVersion')))
+        if match is None:
+            return None
+        return int(match.group(1)), int(match.group(2)), int(match.group(3) or 0)
+
     def placement_error(self):
         """Largest distance (m) between the grid's cell midpoints and the file's own UTM midpoints.
 
@@ -325,6 +350,40 @@ class NetcdfFile(ResultFile):
         if 'SoilLevels' in self._ds.variables:
             return np.array(self._ds.variables['SoilLevels'][:], dtype=float)
         return None
+
+    def read_cells(self, key, time_index, j, i, k=None):
+        var = self._ds.variables[key]
+        t = self._time_slice(var, time_index)
+        j0, j1, i0, i1 = int(j.min()), int(j.max()) + 1, int(i.min()), int(i.max()) + 1
+        if self.variables[key].kind == KIND_3D:
+            k0, k1 = int(k.min()), int(k.max()) + 1
+            block = np.array(var[t + (slice(k0, k1), slice(j0, j1), slice(i0, i1))])
+            values = block[k - k0, j - j0, i - i0]
+        else:
+            block = np.array(var[t + (slice(j0, j1), slice(i0, i1))])
+            values = block[j - j0, i - i0]
+        return _as_float(values)
+
+    def static_fields(self):
+        from .zones import StaticFields
+        variables = self._ds.variables
+        objects = biomet = air = None
+        if 'Objects' in variables and 'GridsK' in variables['Objects'].dimensions:
+            var = variables['Objects']
+            objects = np.array(var[self._time_slice(var, 0)])
+        elif 'Objects' in variables:
+            # 2D module reports: 0 open, 1 building at the pedestrian node
+            var = variables['Objects']
+            air = np.array(var[self._time_slice(var, 0)]) == 0
+        else:
+            air = self._air_2d()
+        if objects is not None and 'ZNodeBiomet' in variables:
+            var = variables['ZNodeBiomet']
+            node = np.array(var[self._time_slice(var, 0)], dtype=float)
+            if np.all(node >= 1):
+                biomet = np.rint(node).astype(int) - 1
+        return StaticFields(self.dem_offset(0), self.grid.dz if self.grid.dz is not None else [1.0],
+                            objects=objects, reported_biomet_k=biomet, air_2d=air)
 
     def read(self, key, time_index=0, height=0.0):
         var = self._ds.variables[key]
@@ -420,6 +479,23 @@ class EdxFile(ResultFile):
 
     def dem_offset(self, time_index=0):
         return self._full_dem_offset()[self.core_y, self.core_x]
+
+    def read_cells(self, key, time_index, j, i, k=None):
+        index = self._index[key]
+        fj, fi = j + self.core_y.start, i + self.core_x.start      # indices on the full grid (with ring)
+        if self.nz > 1:
+            k0, k1 = int(k.min()), int(k.max()) + 1
+            values = self._read_levels(index, k0, k1)[k - k0, fj, fi]
+        else:
+            values = self._read_levels(index, 0, 1)[0, fj, fi]
+        return _as_float(values)
+
+    def static_fields(self):
+        from .zones import StaticFields
+        if self.nz > 1 and 'Objects' in self._index:
+            objects = self._read_levels(self._index['Objects'], 0, self.nz)[:, self.core_y, self.core_x]
+            return StaticFields(self.dem_offset(), self.grid.dz, objects=objects)
+        return StaticFields(np.zeros((self.grid.ny, self.grid.nx), dtype=int), self.grid.dz, air_2d=self._air_2d())
 
     def read(self, key, time_index=0, height=0.0):
         index = self._index[key]
