@@ -6539,6 +6539,13 @@ p, li { white-space: pre-wrap; }
                     </property>
                    </widget>
                   </item>
+                  <item>
+                   <widget class="QComboBox" name="cb_sourceA">
+                    <property name="toolTip">
+                     <string>Results of the folder to use: the NetCDF output, a report file or a folder of EDX files</string>
+                    </property>
+                   </widget>
+                  </item>
                  </layout>
                 </item>
                 <item>
@@ -6570,6 +6577,13 @@ p, li { white-space: pre-wrap; }
                    <widget class="QLineEdit" name="le_seriesB_path">
                     <property name="readOnly">
                      <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QComboBox" name="cb_sourceB">
+                    <property name="toolTip">
+                     <string>Results of the folder to use: the NetCDF output, a report file or a folder of EDX files</string>
                     </property>
                    </widget>
                   </item>

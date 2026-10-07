@@ -2,7 +2,7 @@ from qgis.PyQt.QtCore import QLocale, QTranslator, QCoreApplication, QThread, Qt
 from qgis.PyQt import QtCore
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
-from qgis.core import (Qgis, QgsField, QgsMapLayerProxyModel, QgsVectorLayer,
+from qgis.core import (Qgis, QgsApplication, QgsField, QgsGeometry, QgsMapLayerProxyModel, QgsVectorLayer,
                        QgsFieldProxyModel, QgsRasterLayer, QgsSettings, QgsMessageLog)
 
 # Initialize the bundled Qt resources (icons etc.); importing resources.py has
@@ -20,7 +20,8 @@ from qgis.PyQt.QtWidgets import QMessageBox, QListWidgetItem
 import os
 import subprocess
 import traceback
-from .Dataseries_handler import dataseries
+from .Dataseries_handler import dataseries, STATE_COMPARABLE, STATE_ONLY_A, STATE_ONLY_B
+from .result_layers import Cutline, LayerRequest, ResultLayersTask
 from .core import envimet_install
 from .core.forcing import diurnal_profile
 
@@ -1057,6 +1058,8 @@ class Geo2ENVImet:
         self.dlg.bt_Select_Delta.clicked.connect(self.Select_all_Delta)
         self.dlg.bt_addToMap.clicked.connect(self.add_to_map)
         self.dlg.chk_onlyComparable.clicked.connect(self.loadVariablesInUI)
+        self.dlg.cb_sourceA.currentIndexChanged.connect(lambda: self.select_source('A'))
+        self.dlg.cb_sourceB.currentIndexChanged.connect(lambda: self.select_source('B'))
 
     def Select_all_A(self):
         if self.dlg.bt_Select_A.text() == 'Select All':
@@ -1098,27 +1101,52 @@ class Geo2ENVImet:
         dataseries.SelectedHeight = self.dlg.sb_height.value()
 
     def changeSelectedVariable(self):
-        cb_item_text = self.dlg.cb_dataLayers.itemText(self.dlg.cb_dataLayers.currentIndex())
-        dataseries.setSelectedVariableState(cb_item_text)
-        dataseries.setSelectedVariable(cb_item_text)
+        # the item data is the VariableChoice; its text may contain parentheses
+        dataseries.select_variable(self.dlg.cb_dataLayers.currentData())
 
     def select_seriesA_folder(self):
         folder = QFileDialog.getExistingDirectory(self.dlg, "Select input folder for Series A")
-        if folder == '':
-            self.dlg.le_seriesA_path.setText('')
-        else:
-            self.dlg.le_seriesA_path.setText(folder)
-        dataseries.fillList(folder, 'A')
-        self.setupUI()
+        self.load_series_folder(folder, 'A')
 
     def select_seriesB_folder(self):
         folder = QFileDialog.getExistingDirectory(self.dlg, "Select input folder for Series B")
-        if folder == '':
-            self.dlg.le_seriesB_path.setText('')
-        else:
-            self.dlg.le_seriesB_path.setText(folder)
-        dataseries.fillList(folder, 'B')
+        self.load_series_folder(folder, 'B')
+
+    def series_widgets(self, series):
+        if series == 'A':
+            return self.dlg.le_seriesA_path, self.dlg.cb_sourceA
+        return self.dlg.le_seriesB_path, self.dlg.cb_sourceB
+
+    def load_series_folder(self, folder, series):
+        """Find the result sources in ``folder`` and offer them in the series' source box."""
+        path_edit, source_box = self.series_widgets(series)
+        path_edit.setText(folder)
+        names = dataseries.set_folder(folder, series)
+        source_box.blockSignals(True)
+        source_box.clear()
+        source_box.addItems(names)
+        source_box.blockSignals(False)
+        if folder and not names:
+            self.iface.messageBar().pushMessage(
+                "Error", "No ENVI-met results (NetCDF or EDX/EDT files) found in " + folder, level=Qgis.Warning)
+        self.report_source_errors(series)
         self.setupUI()
+
+    def select_source(self, series):
+        _, source_box = self.series_widgets(series)
+        dataseries.select_source(source_box.currentText(), series)
+        self.report_source_errors(series)
+        self.setupUI()
+
+    def report_source_errors(self, series):
+        errors = dataseries.source_errors(series)
+        if errors:
+            QgsMessageLog.logMessage("Files that could not be read:\n" +
+                                     "\n".join(f"{path}: {message}" for path, message in errors),
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushMessage(
+                "Warning", f"{len(errors)} file(s) of series {series} could not be read; see the ENVI-met log.",
+                level=Qgis.Warning)
 
     def setupUI(self):
         dataseries.reset()
@@ -1130,8 +1158,8 @@ class Geo2ENVImet:
 
     def loadVariablesInUI(self):
         self.dlg.cb_dataLayers.clear()
-        for var in dataseries.getVariablesAsList(self.dlg.chk_onlyComparable.isChecked()):
-            self.dlg.cb_dataLayers.insertItem(999999, var)
+        for choice in dataseries.getVariablesAsList(self.dlg.chk_onlyComparable.isChecked()):
+            self.dlg.cb_dataLayers.addItem(choice.text(), choice)
 
     def fill_listWidgets(self):
         # clear listWidgets
@@ -1179,75 +1207,68 @@ class Geo2ENVImet:
                 item.setCheckState(QtCore.Qt.CheckState.Unchecked)
             self.dlg.lw_Delta.addItem(item)
 
+    def layer_requests(self):
+        """LayerRequests for the time steps checked in the A, B and delta lists."""
+        choice = dataseries.SelectedVariable
+        if choice is None:
+            return []
+        state = choice.state
+        height = self.dlg.sb_height.value()
+        requests = []
+        lists = (self.dlg.lw_SeriesA, self.dlg.lw_SeriesB, self.dlg.lw_Delta)
+        # all three lists have one row per entry of the merged list
+        for i, merged in enumerate(dataseries.mergedList):
+            checked = [lw.item(i).checkState() == Qt.CheckState.Checked for lw in lists]
+            merged.checkedA = checked[0] and not merged.placeholderA and state in (STATE_ONLY_A, STATE_COMPARABLE)
+            merged.checkedB = checked[1] and not merged.placeholderB and state in (STATE_ONLY_B, STATE_COMPARABLE)
+            merged.delta_checked = (checked[2] and not merged.placeholderA and not merged.placeholderB
+                                    and state == STATE_COMPARABLE)
+            a = None if merged.placeholderA else (merged.timestepA.path, merged.timestepA.index, choice.key_a)
+            b = None if merged.placeholderB else (merged.timestepB.path, merged.timestepB.index, choice.key_b)
+            if merged.checkedA:
+                t = merged.timestepA
+                requests.append(LayerRequest(choice.long_name, t.date, t.time, 'SeriesA', a=a, height=height))
+            if merged.checkedB:
+                t = merged.timestepB
+                requests.append(LayerRequest(choice.long_name, t.date, t.time, 'SeriesB', b=b, height=height))
+            if merged.delta_checked:
+                t = merged.timestepB
+                requests.append(LayerRequest(choice.long_name, t.date, t.time, 'Delta(A-B)', a=a, b=b,
+                                             height=height))
+        dataseries.CheckCount = len(requests)
+        return requests
+
+    def sub_area_cutline(self):
+        """The selected sub-area polygon(s) as a Cutline, or None."""
+        layer = dataseries.SelectedSubArea
+        if layer is None:
+            return None
+        geometries = [f.geometry() for f in layer.getFeatures() if f.hasGeometry()]
+        if not geometries:
+            return None
+        return Cutline(QgsGeometry.unaryUnion(geometries).asWkt(), layer.crs().toWkt())
+
     def add_to_map(self):
-        self.thread = QThread()
-        self.worker = Worker()
+        requests = self.layer_requests()
+        if not requests:
+            return
+        self.ui_upd_add_to_map(b=False)
+        self.results_task = ResultLayersTask(requests, cutline=self.sub_area_cutline(),
+                                             on_finished=self.after_add_to_map)
+        self.results_task.progressChanged.connect(self.report_progress_add_to_map)
+        QgsApplication.taskManager().addTask(self.results_task)
 
-        # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
-        # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
-        self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-
-        # update timesteps checked in List A
-        dataseries.CheckCount = 0
-        i = 0
-        items = [self.dlg.lw_SeriesA.item(x) for x in range(self.dlg.lw_SeriesA.count())]
-        for item in items:
-            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
-            # check if there is a itemText. Otherwise, the current index is a placeholder
-            if item.text() != ' ':
-                # check if the selected variable state is 'Only Series A' or 'Comparable'
-                if ((dataseries.SelectedVariableState == 'Only Series A') or (dataseries.SelectedVariableState == 'Comparable')) and item.checkState():
-                    dataseries.mergedList[i].checkedA = True
-                    dataseries.CheckCount += 1
-                else:
-                    dataseries.mergedList[i].checkedA = False
-            i += 1
-
-        # update timesteps checked in List B
-        i = 0
-        items = [self.dlg.lw_SeriesB.item(x) for x in range(self.dlg.lw_SeriesB.count())]
-        for item in items:
-            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
-            # check if there is a itemText. Otherwise, the current index is a placeholder
-            if item.text() != ' ':
-                # check if the selected variable state is 'Only Series B' or 'Comparable'
-                if ((dataseries.SelectedVariableState == 'Only Series B') or (dataseries.SelectedVariableState == 'Comparable')) and item.checkState():
-                    dataseries.mergedList[i].checkedB = True
-                    dataseries.CheckCount += 1
-                else:
-                    dataseries.mergedList[i].checkedB = False
-            i += 1
-
-        # update timesteps checked in Delta-List
-        i = 0
-        items = [self.dlg.lw_Delta.item(x) for x in range(self.dlg.lw_Delta.count())]
-        for item in items:
-            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
-            # check if there is a timestep in both lists A and B, then we got a delta-checkbox
-            if (not dataseries.mergedList[i].placeholderA) and (not dataseries.mergedList[i].placeholderB):
-                # check if the selected variable state is 'Comparable'
-                if (dataseries.SelectedVariableState == 'Comparable') and item.checkState():
-                    dataseries.mergedList[i].delta_checked = True
-                    dataseries.CheckCount += 1
-                else:
-                    dataseries.mergedList[i].delta_checked = False
-            i += 1
-
-        if dataseries.CheckCount != 0:
-            self.thread.started.connect(lambda: self.worker.add_layers_to_map())
-            # disable GUI
-            self.ui_upd_add_to_map(b=False)
-            self.thread.finished.connect(lambda: self.ui_upd_add_to_map(b=True))
-
-            self.worker.finished.connect(self.thread.quit)
-            self.worker.finished.connect(self.worker.deleteLater)
-            self.thread.finished.connect(self.thread.deleteLater)
-            # enable GUI, when done
-            self.worker.progress.connect(self.report_progress_add_to_map)
-            self.thread.start()  # finally start the thread
+    def after_add_to_map(self, task):
+        self.ui_upd_add_to_map(b=True)
+        self.dlg.pb_addToMap.setValue(100)
+        if task.errors:
+            QgsMessageLog.logMessage("Layers that could not be made:\n" + "\n".join(task.errors),
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushMessage(
+                "Warning", f"{len(task.errors)} layer(s) could not be made; see the ENVI-met log.", level=Qgis.Warning)
 
     def report_progress_add_to_map(self, progress):
-        self.dlg.pb_addToMap.setValue(progress)
+        self.dlg.pb_addToMap.setValue(int(progress))
 
     def reset_progess_bar_add_to_map(self):
         self.dlg.pb_addToMap.setValue(0)
