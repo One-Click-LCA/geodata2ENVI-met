@@ -12,7 +12,8 @@ from osgeo import gdal, osr
 
 from qgis.PyQt.QtCore import Qt, QObject, QDate, QTime, pyqtSignal
 from qgis.core import (Qgis, QgsField, QgsPoint, QgsPointXY, QgsVectorLayer, QgsRectangle,
-                       QgsFeatureRequest, QgsMessageLog, QgsRasterLayer, QgsGeometry, QgsFeature)
+                       QgsFeatureRequest, QgsMessageLog, QgsRasterLayer, QgsGeometry, QgsFeature,
+                       QgsCoordinateTransform, QgsCoordinateTransformContext, QgsReferencedRectangle)
 # QgsGeometryUtils.angleBetweenThreePoints() is deprecated from QGIS 3.40 on;
 # the identical method lives on QgsGeometryUtilsBase (added in QGIS 3.34).
 try:
@@ -184,6 +185,8 @@ class Worker(QObject):
 
         self.lon = 0.0
         self.lat = 0.0
+        self.target_epsg = None     # UTM CRS of the sub-area; every input is projected into it
+        self.warnings = []          # shown to the user when the export has finished
         self.UTMZone = -1
         self.UTMHemisphere = 'N'
         self.timeZoneName = ""
@@ -895,8 +898,8 @@ class Worker(QObject):
 
         reshaped = processing.run("gdal:warpreproject",
                                   {'INPUT': raster_layer,
-                                   'SOURCE_CRS': self.surfLayer_raster.crs(),
-                                   'TARGET_CRS': self.surfLayer_raster.crs(),
+                                   'SOURCE_CRS': input_layer.crs(),
+                                   'TARGET_CRS': input_layer.crs(),
                                    'RESAMPLING': 0,
                                    'NODATA': None,
                                    'TARGET_RESOLUTION': None,
@@ -1714,6 +1717,18 @@ class Worker(QObject):
     # Reprojection helpers
     # ==================================================================
     def reprojectLayerToUTM(self, aLayer, isSubAreaLayer: bool):
+        context = self.get_safe_processing_context()
+        if not isSubAreaLayer and self.target_epsg is not None:
+            # Every input goes into the sub-area's UTM zone, whatever its own extent (the zone used to be
+            # taken from each layer's extent corner, so one far-away feature moved the whole layer).
+            # Only the features near the sub-area are reprojected.
+            near = processing.run('native:extractbyextent',
+                                  {'INPUT': aLayer, 'EXTENT': self._sub_area_extent_referenced(), 'CLIP': False,
+                                   'OUTPUT': 'memory:near'}, context=context)['OUTPUT']
+            return processing.run('native:reprojectlayer',
+                                  {'INPUT': near, 'TARGET_CRS': 'EPSG:' + str(self.target_epsg),
+                                   'OUTPUT': 'memory:Reprojected'}, context=context)['OUTPUT']
+
         # print(aLayer.crs().authid().split(":")[1])
         if not (aLayer.crs().authid().split(":")[1] == str(4326)):
             # print('in_if')
@@ -1742,8 +1757,8 @@ class Worker(QObject):
             self.lat = lat
             self.UTMZone = aUTMZone.split(" ")[0]
             self.UTMHemisphere = aUTMZone.split(" ")[1]
+            self.target_epsg = auth_id
 
-        context = self.get_safe_processing_context()
         parameter = {
             'INPUT': aLayer,
             'TARGET_CRS': 'EPSG:' + str(auth_id),
@@ -1751,19 +1766,39 @@ class Worker(QObject):
         }
         return processing.run('native:reprojectlayer', parameter, context=context)['OUTPUT']
 
-    def reprojectRasterLayerToUTM(self, aLayer):
-        proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
-        x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
-        lon, lat = proj.transform(x1, y1)
-        aUTMZone = get_UTM_zone(lon, lat)
-        # print(aUTMZone)
-        auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ', ''))
-        # print(auth_id)
+    def _sub_area_extent(self, margin=50.0):
+        """Extent of the (unrotated) sub-area in its UTM CRS, grown by ``margin`` metres."""
+        extent = QgsRectangle(self.subAreaLayer_nonRot.extent())
+        extent.grow(margin)
+        return extent
 
+    def _sub_area_extent_referenced(self, margin=50.0):
+        return QgsReferencedRectangle(self._sub_area_extent(margin), self.subAreaLayer_nonRot.crs())
+
+    def reprojectRasterLayerToUTM(self, aLayer):
         context = self.get_safe_processing_context()
+        source_crs = aLayer.crs()
+        if self.target_epsg is not None:
+            # the sub-area's zone; and only the part of the raster around the sub-area is warped
+            auth_id = self.target_epsg
+            transform = QgsCoordinateTransform(self.subAreaLayer_nonRot.crs(), aLayer.crs(),
+                                               QgsCoordinateTransformContext())
+            window = transform.transformBoundingBox(self._sub_area_extent(margin=150.0))
+            window = window.intersect(aLayer.extent())
+            if not window.isEmpty():
+                aLayer = processing.run("gdal:cliprasterbyextent",
+                                        {"INPUT": aLayer, "PROJWIN": window, "OVERCRS": False,
+                                         "OUTPUT": 'TEMPORARY_OUTPUT'}, context=context)['OUTPUT']
+        else:
+            proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
+            x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
+            lon, lat = proj.transform(x1, y1)
+            aUTMZone = get_UTM_zone(lon, lat)
+            auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ', ''))
+
         reshaped = processing.run("gdal:warpreproject",
                                   {'INPUT': aLayer,
-                                   'SOURCE_CRS': aLayer.crs(),
+                                   'SOURCE_CRS': source_crs,
                                    'TARGET_CRS': 'EPSG:' + str(auth_id),
                                    'RESAMPLING': 0,
                                    'OPTIONS': '',
