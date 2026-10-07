@@ -1,4 +1,4 @@
-from qgis.PyQt.QtCore import QLocale, QTranslator, QCoreApplication, QThread, Qt, QDate, QTime
+from qgis.PyQt.QtCore import QLocale, QTranslator, QCoreApplication, QThread, QTimer, Qt, QDate, QTime
 from qgis.PyQt import QtCore
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
@@ -659,6 +659,9 @@ class Geo2ENVImet:
 
         self.iface.messageBar().pushMessage("Success", "Output file written at " + self.worker.filename,
                                             level=Qgis.Success, duration=5)
+        for warning in self.worker.warnings:
+            QgsMessageLog.logMessage(warning, 'ENVI-met', level=Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushMessage("Warning", warning, level=Qgis.Warning)
 
     def updateCalcVertExt(self):
         self.dlg.l_highestStruct.setText(
@@ -901,10 +904,8 @@ class Geo2ENVImet:
             if tmp_subAreaFeats is not None:
                 tmp_subAreaFeatCnt = sum(1 for _ in tmp_subAreaFeats)
                 if tmp_subAreaFeatCnt == 1:
+                    # updateCalcVertExt shows the heights when the worker has finished
                     self.startWorkerCalcVertExt()
-                    self.dlg.l_highestStruct.setText("Highest Structure (DEM + Building): " + str(
-                        self.worker.maxHeightTotal) + " m (Building = " + str(
-                        self.worker.maxHeightB) + " m, DEM = " + str(self.worker.maxHeightDEM) + " m)")
 
     def select_cb_Output_SubArea(self):
         # check if this layer only contains one polygon feature
@@ -1822,15 +1823,15 @@ class Geo2ENVImet:
 
         self.dlg.cb_subArea.layerChanged.connect(self.select_cb_subAreaClick)
         self.dlg.bt_SaveTo.clicked.connect(lambda: self.select_output_file(filetype='INX'))
-        self.dlg.se_dx.valueChanged.connect(self.startWorkerPreviewdxyz)
-        self.dlg.se_dy.valueChanged.connect(self.startWorkerPreviewdxyz)
-
-        self.dlg.se_dz.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.se_zGrids.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.se_teleStart.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.se_teleStretch.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.chk_useSplitting.stateChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.chk_useTelescoping.stateChanged.connect(self.startWorkerPreviewdz)
+        # previews start once the values have stopped changing, not on every step of a spin box
+        self.preview_xy_timer = self.single_shot_timer(self.startWorkerPreviewdxyz)
+        self.preview_z_timer = self.single_shot_timer(self.startWorkerPreviewdz)
+        for widget in (self.dlg.se_dx, self.dlg.se_dy):
+            widget.valueChanged.connect(lambda *_: self.preview_xy_timer.start())
+        for widget in (self.dlg.se_dz, self.dlg.se_zGrids, self.dlg.se_teleStart, self.dlg.se_teleStretch):
+            widget.valueChanged.connect(lambda *_: self.preview_z_timer.start())
+        for widget in (self.dlg.chk_useSplitting, self.dlg.chk_useTelescoping):
+            widget.stateChanged.connect(lambda *_: self.preview_z_timer.start())
 
         self.dlg.bt_SaveINX.clicked.connect(lambda: self.start_worker_inx())
 
@@ -1911,6 +1912,26 @@ class Geo2ENVImet:
         self.dlg.cb_summary_receptors.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.dlg.cb_summary_simpleplants.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.dlg.cb_summary_simpleplants.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    PREVIEW_DELAY_MS = 400
+
+    def single_shot_timer(self, slot):
+        timer = QTimer(self.dlg)
+        timer.setSingleShot(True)
+        timer.setInterval(self.PREVIEW_DELAY_MS)
+        timer.timeout.connect(lambda: self.when_no_worker_runs(slot, timer))
+        return timer
+
+    def when_no_worker_runs(self, slot, timer):
+        """Run ``slot`` unless a worker thread is busy; then try again later."""
+        try:
+            busy = self.thread is not None and self.thread.isRunning()
+        except RuntimeError:        # the thread object has been deleted: nothing runs
+            busy = False
+        if busy:
+            timer.start()
+        else:
+            slot()
 
     def select_surface_source(self):
         if self.dlg.rb_surfVector.isChecked():

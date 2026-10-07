@@ -1,11 +1,8 @@
 import math
-import sys
-import json
 import time
 from math import degrees
 
 import numpy as np
-import requests
 import pyproj
 from pyproj.database import query_utm_crs_info
 from osgeo import gdal, osr
@@ -27,6 +24,8 @@ from .simx_manager import SIMX
 from .Const_defines import C_NODATA_VALUE, FIELD_TYPE_INT, FIELD_TYPE_STRING
 from .worker_helpers import get_UTM_zone
 from .core.grid import raster_to_envimet_ij, raster_to_inx_receptor_cell
+from .core.inx_arrays import border_mask, first_non_empty, map_codes, map_values, matrix_text
+from .core import location
 
 
 class Building:
@@ -208,9 +207,6 @@ class Worker(QObject):
         self.bNOTFixedH = True
         self.startSurfID = "0200PP"
         self.removeVegBuild = True
-
-        # Set the printoptions to maximum to print whole arrays of all following print functions
-        np.set_printoptions(threshold=sys.maxsize)
 
     # ==================================================================
     # Geometry, rotation and processing helpers
@@ -447,36 +443,21 @@ class Worker(QObject):
     # Location, elevation and CRS lookups (online)
     # ==================================================================
     def get_time_zone_geonames(self):
+        """Hours east of UTC of the location's standard time (ENVI-met uses local standard time)."""
         QgsMessageLog.logMessage("Getting Timezone...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        try:
-            url = 'http://api.geonames.org/timezoneJSON?lat=' + str(self.lat) + '&lng=' \
-                  + str(self.lon) + '&username=envi_met'
-            response = requests.get(url, timeout=20)
-            if response.status_code == 200:
-                data = json.loads(response.text)
-                if "status" not in data and "gmtOffset" in data:
-                    return str(data["gmtOffset"])
-                return str(round(self.lon / 15))
-            else:
-                return str(round(self.lon / 15))
-        except Exception:
-            return str(round(self.lon / 15))
+        offset, problem = location.standard_time_offset(self.lat, self.lon)
+        if problem:
+            self.warnings.append(f"Time zone: {problem}; estimated from the longitude as UTC{offset:+g}. "
+                                 f"Check the time zone in the model area's location settings.")
+        return str(offset)
 
     def get_elevation_geonames(self):
         QgsMessageLog.logMessage("Getting Elevation...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        try:
-            response = requests.get('http://api.geonames.org/srtm1JSON?lat=' + str(self.lat) + '&lng=' + str(self.lon) + '&username=envi_met', timeout=20)
-            if response.status_code == 200:
-                data = json.loads(response.text)
-                if "srtm1" in data:
-                    elev = int(data["srtm1"])
-                    if elev >= 0:
-                        return elev
-                return self.refHeightDEM
-            else:
-                return self.refHeightDEM
-        except Exception:
+        elevation = location.elevation(self.lat, self.lon)
+        if elevation is None:
+            self.warnings.append("Elevation: GeoNames gave none; the terrain reference height is used instead.")
             return self.refHeightDEM
+        return elevation
 
     def find_crs_auth_id(self, crs_description: str) -> int:
         """
@@ -688,17 +669,9 @@ class Worker(QObject):
 
         grid1_str_array, grid1_int_array = self.rasterize_gdal(input_layer=self.surfLayer_rot, field=ID_int, get_strArray=True)
 
-        # invert dictionary
-        invTmpDict = {v: k for k, v in aTmpDict.items()}
-        for i in range(grid1_int_array.shape[0]):
-            for j in range(grid1_int_array.shape[1]):
-                if grid1_int_array[i, j] <= 0:
-                    grid1_str_array[i, j] = self.startSurfID
-                else:
-                    grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-
+        # integer codes back to ENVI-met IDs; cells without a surface get the starting surface
+        grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, self.startSurfID)
         aTmpDict.clear()
-        invTmpDict.clear()
         QgsMessageLog.logMessage("Finished: Gridding Surfaces.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return grid1_str_array
 
@@ -961,22 +934,10 @@ class Worker(QObject):
 
         grid1_str_array, grid1_int_array = self.get_data_from_raster(self.surfLayer_raster)
 
-        for i in range(grid1_str_array.shape[0]):
-            for j in range(grid1_str_array.shape[1]):
-                val = self.surfLayer_raster_def.get(grid1_str_array[i, j])
-                if val is not None:
-                    # this is a specific value the user mapped onto an ENVI-met soil
-                    grid1_str_array[i, j] = val
-                else:
-                    other_val = self.surfLayer_raster_def.get('OTHER')
-                    if other_val is not None:
-                        # 'other' was defined by the user, set the value
-                        grid1_str_array[i, j] = other_val
-                    else:
-                        # 'other' was not defined by the user, so we use 0100SL as default soil
-                        grid1_str_array[i, j] = self.startSurfID
-
-        return grid1_str_array
+        # raster values the user mapped onto ENVI-met soils; others get 'OTHER' if defined,
+        # else the starting surface
+        return map_values(grid1_str_array, self.surfLayer_raster_def, other=self.surfLayer_raster_def.get('OTHER'),
+                          default=self.startSurfID)
 
     def rotate_raster_layer(self, layer):
         dataset = gdal.Open(layer)
@@ -1068,22 +1029,9 @@ class Worker(QObject):
         self.plant1dLayer_raster = QgsRasterLayer(outFN, "spTMP_UTM")
         grid1_str_array, grid1_int_array = self.get_data_from_raster(self.plant1dLayer_raster)
 
-        for i in range(grid1_str_array.shape[0]):
-            for j in range(grid1_str_array.shape[1]):
-                val = self.plant1dLayer_raster_def.get(grid1_str_array[i, j])
-                if val is not None:
-                    # this is a specific value the user mapped onto an ENVI-met soil
-                    grid1_str_array[i, j] = val
-                else:
-                    other_val = self.plant1dLayer_raster_def.get('OTHER')
-                    if other_val is not None:
-                        # 'other' was defined by the user, set the value
-                        grid1_str_array[i, j] = other_val
-                    else:
-                        # 'other' was not defined by the user, so we use 0100SL as default soil
-                        grid1_str_array[i, j] = ''
-
-        return grid1_str_array
+        # raster values the user mapped onto ENVI-met plants; others get 'OTHER' if defined, else no plant
+        return map_values(grid1_str_array, self.plant1dLayer_raster_def,
+                          other=self.plant1dLayer_raster_def.get('OTHER'), default='')
 
     # ==================================================================
     # Grid conforming and rasterization helpers
@@ -1219,20 +1167,10 @@ class Worker(QObject):
                                                                    get_strArray=True, burn_val=True)
 
         if not self.plant1dID_UseCustom:
-            # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
             aTmpDict.clear()
-            invTmpDict.clear()
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.plant1dID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.plant1dID_custom}, '')
 
         QgsMessageLog.logMessage("Finished: Gridding Simple Plants.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return grid1_str_array
@@ -1286,31 +1224,22 @@ class Worker(QObject):
             grid1_str_array, grid1_int_array = self.rasterize_gdal(input_layer=self.plant3dLayer_rot, field=ID_int,
                                                                    get_strArray=True)
 
+        # one tree per cell with a tree (row by row, as before)
         if self.plant3dID_UseCustom:
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    if grid1_int_array[i, j] == 999:
-                        grid1_str_array[i, j] = self.plant3dID_custom
-                        root_i, root_j = raster_to_envimet_ij(i, j, self.JJ)
-                        newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0, plantID=str(self.plant3dID_custom),
-                                       name='Imported Plant', observe=0)
-                        self.s_treeList.append(newTree)
+            for i, j in zip(*np.nonzero(grid1_int_array == 999)):
+                root_i, root_j = raster_to_envimet_ij(int(i), int(j), self.JJ)
+                newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0, plantID=str(self.plant3dID_custom),
+                               name='Imported Plant', observe=0)
+                self.s_treeList.append(newTree)
         else:
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        tmpTree = aTmpDict.get(grid1_int_array[i, j])
-                        if tmpTree is not None:
-                            grid1_str_array[i, j] = tmpTree.enviID
-                            root_i, root_j = raster_to_envimet_ij(i, j, self.JJ)
-                            newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0,
-                                           plantID=tmpTree.enviID.replace("NULL", ""), name='Imported Plant',
-                                           observe=tmpTree.obs)
-                            self.s_treeList.append(newTree)
+            for i, j in zip(*np.nonzero(grid1_int_array > 0)):
+                tmpTree = aTmpDict.get(int(grid1_int_array[i, j]))
+                if tmpTree is not None:
+                    root_i, root_j = raster_to_envimet_ij(int(i), int(j), self.JJ)
+                    newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0,
+                                   plantID=tmpTree.enviID.replace("NULL", ""), name='Imported Plant',
+                                   observe=tmpTree.obs)
+                    self.s_treeList.append(newTree)
             aTmpDict.clear()
 
         QgsMessageLog.logMessage("Finished: Gridding 3D Plants.", 'ENVI-met', level=Qgis.MessageLevel.Info)
@@ -1472,17 +1401,9 @@ class Worker(QObject):
 
         if not self.srcPID_UseCustom:
             # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-            invTmpDict.clear()
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.srcPID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.srcPID_custom}, '')
 
         aTmpDict.clear()
 
@@ -1542,17 +1463,9 @@ class Worker(QObject):
 
         if not self.srcLID_UseCustom:
             # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-            invTmpDict.clear()
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.srcLID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.srcLID_custom}, '')
 
         aTmpDict.clear()
 
@@ -1611,17 +1524,9 @@ class Worker(QObject):
 
         if not self.srcAID_UseCustom:
             # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-            invTmpDict.clear()
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.srcAID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.srcAID_custom}, '')
 
         aTmpDict.clear()
 
@@ -1682,33 +1587,22 @@ class Worker(QObject):
             # QgsVectorFileWriter.writeAsVectorFormat(self.recLayer_rot, "C:/Users/simonhe/AppData/Local/Temp/processing_HWIddK/760a68c50707482880b5084165a1d3b3/a", "UTF-8", self.recLayer_rot.crs(), "ESRI Shapefile")
             # print(grid1_str_array)
 
-        ENVI_ID_int = -1
+        # one receptor per cell with a receptor (row by row, as before)
         if self.recID_UseCustom:
             self.recID_custom = "r_"
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    if grid1_int_array[i, j] == 999:
-                        ENVI_ID_int = ENVI_ID_int + 1
-                        grid1_str_array[i, j] = self.recID_custom + "{:04d}".format(ENVI_ID_int)
-                        cell_i, cell_j = raster_to_inx_receptor_cell(i, j, self.JJ)
-                        newRec = dict(cell_i=cell_i, cell_j=cell_j, name=str(grid1_str_array[i, j]))
-                        self.s_recList.append(newRec)
+            for number, (i, j) in enumerate(zip(*np.nonzero(grid1_int_array == 999))):
+                cell_i, cell_j = raster_to_inx_receptor_cell(int(i), int(j), self.JJ)
+                newRec = dict(cell_i=cell_i, cell_j=cell_j, name=self.recID_custom + "{:04d}".format(number))
+                self.s_recList.append(newRec)
         else:
-            # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-                        cell_i, cell_j = raster_to_inx_receptor_cell(i, j, self.JJ)
-                        newRec = dict(cell_i=cell_i, cell_j=cell_j, name=str(grid1_str_array[i, j]))
-                        self.s_recList.append(newRec)
+            names = {v: k for k, v in aTmpDict.items()}
+            for i, j in zip(*np.nonzero(grid1_int_array > 0)):
+                name = names.get(int(grid1_int_array[i, j]))
+                if name is not None:
+                    cell_i, cell_j = raster_to_inx_receptor_cell(int(i), int(j), self.JJ)
+                    newRec = dict(cell_i=cell_i, cell_j=cell_j, name=str(name))
+                    self.s_recList.append(newRec)
             aTmpDict.clear()
-            invTmpDict.clear()
 
         QgsMessageLog.logMessage("Finished: Gridding Receptors.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return self.s_recList
@@ -1896,10 +1790,7 @@ class Worker(QObject):
         # fixed height tag not supported yet
         bFixHeight_int_array = np.zeros(shape=(self.JJ, self.II), dtype=int)
         if not self.bNOTFixedH:
-            for i in range(bTop_int_array.shape[0]):
-                for j in range(bTop_int_array.shape[1]):
-                    if bTop_int_array[i, j] > 0:
-                        bFixHeight_int_array[i, j] = 1
+            bFixHeight_int_array[bTop_int_array > 0] = 1
         self.progress.emit(20)
 
         # plants1d
@@ -1984,18 +1875,8 @@ class Worker(QObject):
         else:
             srcA_str_array = self.rasterSrcA()
 
-        # now handle srcArray P > L > A
-        src_int_array = np.zeros(shape=(self.JJ, self.II), dtype=int)   # create a new array that holds all sources
-        src_str_array = src_int_array.astype(str)
-        for i in range(srcA_str_array.shape[0]):
-            for j in range(srcA_str_array.shape[1]):
-                src_str_array[i, j] = ""
-                if not srcA_str_array[i, j] == "":
-                    src_str_array[i, j] = srcA_str_array[i, j]
-                if not srcL_str_array[i, j] == "":
-                    src_str_array[i, j] = srcL_str_array[i, j]
-                if not srcP_str_array[i, j] == "":
-                    src_str_array[i, j] = srcP_str_array[i, j]
+        # one source per cell: points before lines before areas
+        src_str_array = first_non_empty(srcP_str_array, srcL_str_array, srcA_str_array)
 
         self.progress.emit(60)
 
@@ -2014,19 +1895,11 @@ class Worker(QObject):
         QgsMessageLog.logMessage("Preparing Model Border...", 'ENVI-met', level=Qgis.MessageLevel.Info)
         # empty cells at border -> only for buildings
         if self.removeBBorder > 0:
-            bRemSet = set(())
-            for i in range(bTop_int_array.shape[0]):
-                for j in range(bTop_int_array.shape[1]):
-                    # bTop; bBot; bNumber2d
-                    if (i < self.removeBBorder) or (j < self.removeBBorder) or (
-                            i > (bTop_int_array.shape[0] - self.removeBBorder)) or (
-                            j > (bTop_int_array.shape[1] - self.removeBBorder)):
-                        if bNumber_int_array[i, j] > 0:
-                            bRemSet.add(bNumber_int_array[i, j])
-                        bFixHeight_int_array[i, j] = 0
-                        bTop_int_array[i, j] = 0
-                        bBot_int_array[i, j] = 0
-                        bNumber_int_array[i, j] = 0
+            # the same number of cells on every side (the south and east sides kept one row/column more)
+            border = border_mask(bTop_int_array.shape, self.removeBBorder)
+            bRemSet = set(np.unique(bNumber_int_array[border & (bNumber_int_array > 0)]).tolist())
+            for array in (bFixHeight_int_array, bTop_int_array, bBot_int_array, bNumber_int_array):
+                array[border] = 0
             # now update bList — drop buildings that no longer have any cells
             remaining_buildings = set(np.unique(bNumber_int_array).tolist())
             for bRem in bRemSet:
@@ -2069,15 +1942,10 @@ class Worker(QObject):
 
         # check buildings need to be removed e.g. building height = 0 or < 0
         QgsMessageLog.logMessage("Check integrity of Buildings...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        bRemSet02 = set(())
-        for i in range(bTop_int_array.shape[0]):
-            for j in range(bTop_int_array.shape[1]):
-                if bTop_int_array[i, j] <= 0 or bBot_int_array[i, j] >= bTop_int_array[i, j]:
-                    # remove building in 2d
-                    bTop_int_array[i, j] = 0
-                    bBot_int_array[i, j] = 0
-                    bRemSet02.add(bNumber_int_array[i, j])
-                    bNumber_int_array[i, j] = 0
+        invalid = (bTop_int_array <= 0) | (bBot_int_array >= bTop_int_array)
+        bRemSet02 = set(np.unique(bNumber_int_array[invalid]).tolist())
+        for array in (bTop_int_array, bBot_int_array, bNumber_int_array):
+            array[invalid] = 0
 
         # now update bList — drop buildings that no longer have any cells
         remaining_buildings = set(np.unique(bNumber_int_array).tolist())
@@ -2088,34 +1956,15 @@ class Worker(QObject):
         self.progress.emit(80)
         QgsMessageLog.logMessage("Converting Data to ENVI-met model area...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
-        # finally convert to matrix
-        bTop_str_matrix = np.array2string(bTop_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bTop_str_matrix = bTop_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        bBot_str_matrix = np.array2string(bBot_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bBot_str_matrix = bBot_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        bNumber_str_matrix = np.array2string(bNumber_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bNumber_str_matrix = bNumber_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        bFixHeight_str_matrix = np.array2string(bFixHeight_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bFixHeight_str_matrix = bFixHeight_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        # terrain
-        dem_str_matrix = np.array2string(dem_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        dem_str_matrix = dem_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        # plants
-        simplePlant_str_matrix = np.array2string(simplePlant_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        simplePlant_str_matrix = simplePlant_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'", "").replace("NULL", "")
-
-        # surfaces
-        surf_str_matrix = np.array2string(surf_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        surf_str_matrix = surf_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'", "").replace("NULL", "")
-
-        # sources
-        src_str_matrix = np.array2string(src_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        src_str_matrix = src_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'", "").replace("NULL", "")
+        # finally convert to matrix text, one line per row as SPACES writes it
+        bTop_str_matrix = matrix_text(bTop_int_array)
+        bBot_str_matrix = matrix_text(bBot_int_array)
+        bNumber_str_matrix = matrix_text(bNumber_int_array)
+        bFixHeight_str_matrix = matrix_text(bFixHeight_int_array)
+        dem_str_matrix = matrix_text(dem_int_array)
+        simplePlant_str_matrix = matrix_text(simplePlant_str_array)
+        surf_str_matrix = matrix_text(surf_str_array)
+        src_str_matrix = matrix_text(src_str_array)
 
         self.progress.emit(90)
         QgsMessageLog.logMessage("Writing file...", 'ENVI-met', level=Qgis.MessageLevel.Info)
@@ -2126,7 +1975,7 @@ class Worker(QObject):
             print("    <filetype>INPX ENVI-met Area Input File</filetype>", file=output_file)
             print("    <version>4</version>", file=output_file)
             print("    <revisiondate>  </revisiondate>", file=output_file)
-            print("    <remark> model created by QGIS plugin, additional settings: def roof material: " + self.defaultWall + "; def wall material: " + self.defaultRoof + "; clear buildings cells at border: " + str(self.removeBBorder) + "; leveled buildings in DEM: " + str(self.bLeveled) + "; building height not fixed: " + str(self.bNOTFixedH) + "; starting surface: " + self.startSurfID + "; remove veg from buildings: " + str(self.removeVegBuild) + " </remark>", file=output_file)
+            print("    <remark> model created by QGIS plugin, additional settings: def roof material: " + self.defaultRoof + "; def wall material: " + self.defaultWall + "; clear buildings cells at border: " + str(self.removeBBorder) + "; leveled buildings in DEM: " + str(self.bLeveled) + "; building height not fixed: " + str(self.bNOTFixedH) + "; starting surface: " + self.startSurfID + "; remove veg from buildings: " + str(self.removeVegBuild) + " </remark>", file=output_file)
             print("    <fileInfo> model created by QGIS plugin </fileInfo>", file=output_file)
             print("    <encryptionlevel>0</encryptionlevel>", file=output_file)
             print("  </Header>", file=output_file)
@@ -2227,6 +2076,7 @@ class Worker(QObject):
                 "     <ID_plants1D type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">",
                 file=output_file)
             print(simplePlant_str_matrix, file=output_file)
+            print("     </ID_plants1D>", file=output_file)
             print("  </simpleplants2D>", file=output_file)
 
             for tree in self.s_treeList:

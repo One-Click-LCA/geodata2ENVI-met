@@ -48,6 +48,24 @@ class DialogHandlersTest(unittest.TestCase):
             QMessageBox.exec = original
         self.assertEqual(shown, ['Do you really want to clear all settings?'])
 
+    def test_previews_wait_until_the_values_settle(self):
+        from qgis.PyQt.QtTest import QTest
+        calls = []
+        timer = self.plugin.single_shot_timer(lambda: calls.append(1))
+        for _ in range(3):
+            timer.start()
+            QTest.qWait(50)
+        self.assertEqual(calls, [])
+        QTest.qWait(self.plugin.PREVIEW_DELAY_MS + 300)
+        self.assertEqual(calls, [1])
+
+    def test_spin_boxes_only_start_the_timer(self):
+        before = self.plugin.thread
+        self.plugin.dlg.se_dx.setValue(self.plugin.dlg.se_dx.value() + 1)
+        self.assertTrue(self.plugin.preview_xy_timer.isActive())
+        self.assertIs(self.plugin.thread, before)
+        self.plugin.preview_xy_timer.stop()
+
     def test_netcdf_radio_buttons(self):
         """The NetCDF yes/no buttons used to raise on every click (B4)."""
         dlg = self.plugin.dlg

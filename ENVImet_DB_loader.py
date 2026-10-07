@@ -61,7 +61,8 @@ class EnviProjects:
                     if '<description>' in row:
                         new_project.description = row.split(">", 1)[1].split("<", 1)[0]
                     if '<useProjectDB>' in row:
-                        new_project.useProjectDB = bool(row.split(">", 1)[1].split("<", 1)[0].strip())
+                        # '0' or '1'; bool('0') would be True
+                        new_project.useProjectDB = row.split(">", 1)[1].split("<", 1)[0].strip() not in ('', '0')
                 # if new_project.useProjectDB and os.path.exists(new_project.projectPath + '/projectdatabase.edb'):
                 #    new_project.DB = ENVImetDB(filepath=self.sysDB_path, use_project_db=True, filepath_project_db=new_project.projectPath + '/projectdatabase.edb')
                 # else:

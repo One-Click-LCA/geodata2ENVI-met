@@ -353,7 +353,8 @@ class SIMX:
                 elif '<MRTProjFac>' in row:
                     self.RadScheme.MRTProjFac = int(row.split(">", 1)[1].split("<", 1)[0].strip())
             elif section == 'Parallel':
-                if '<CPUdemand>' in row:
+                # ENVI-guide writes <CPUDemand>
+                if '<cpudemand>' in row.lower():
                     self.Parallel.CPUdemand = row.split(">", 1)[1].split("<", 1)[0].strip()
             elif section == 'SOR':
                 if not self.ExpertSelected:
