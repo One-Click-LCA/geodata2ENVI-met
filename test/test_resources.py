@@ -17,7 +17,6 @@ import unittest
 from qgis.PyQt.QtGui import QIcon
 
 
-
 class Geo2ENVImetDialogTest(unittest.TestCase):
     """Test rerources work."""
 
@@ -35,10 +34,8 @@ class Geo2ENVImetDialogTest(unittest.TestCase):
         icon = QIcon(path)
         self.assertFalse(icon.isNull())
 
+
 if __name__ == "__main__":
-    suite = unittest.makeSuite(Geo2ENVImetResourcesTest)
+    suite = unittest.makeSuite(Geo2ENVImetDialogTest)
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(suite)
-
-
-

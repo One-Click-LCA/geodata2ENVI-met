@@ -1,18 +1,26 @@
+import warnings
 import numpy as np
-from .Const_defines import *
+from .Const_defines import C_TERRAIN_ID
 
 try:
-    import netCDF4
+    # netCDF4 is a Cython extension. When its compiled binary was built against a
+    # slightly different numpy ABI than the numpy QGIS bundles, importing it emits
+    # a benign "numpy.ndarray size changed" RuntimeWarning. numpy keeps this case
+    # forward-compatible, so the warning is harmless -- silence just that message.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="numpy.ndarray size changed",
+                                category=RuntimeWarning)
+        import netCDF4
 except ImportError:
     # first we try to install netCDF4 from online source
     from qgis.PyQt.QtWidgets import QMessageBox
     QMessageBox.warning(None, 'Missing Library for Geodata2ENVI-met plugin',
-                        "The Python library 'netCDF4' is required. It will now be installed. Please restart QGIS before using the plugin.", QMessageBox.Ok, QMessageBox.Ok) 
+                        "The Python library 'netCDF4' is required. It will now be installed. Please restart QGIS before using the plugin.", QMessageBox.Ok, QMessageBox.Ok)
     import os
     if os.system("pip install netCDF4") == 0:
-          
-        #QMessageBox.information(None, 'netCDF library for Geodata2ENVI-met plugin installed', "Please restart QGIS before using the plugin.", QMessageBox.Ok, QMessageBox.Ok) 
-        """        
+
+        # QMessageBox.information(None, 'netCDF library for Geodata2ENVI-met plugin installed', "Please restart QGIS before using the plugin.", QMessageBox.Ok, QMessageBox.Ok)
+        """
         # if that failed, we try our best with a local whl file
         import sys
         this_dir = os.path.dirname(os.path.realpath(__file__, strict=True))
@@ -26,13 +34,15 @@ except ImportError:
         elif sys.platform == "linux" or sys.platform == "linux2":
             # Linux
             path = os.path.normpath(this_dir + '/src/NetCDF4/netCDF4-1.7.2-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl')
-                                                                                                                          
+
         if not (path in sys.path):
             sys.path.append(path)
         """
     else:
         QMessageBox.warning(None, 'Missing Library for Geodata2ENVI-met plugin',
                             "The Python library 'netCDF4' is required. It should be installed automatically when you install the plugin while being online.", QMessageBox.Ok, QMessageBox.Ok)
+
+
 class NetCDF_Variable_Metadata:
     def __init__(self):
         self.name = ''

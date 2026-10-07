@@ -1,5 +1,4 @@
 import numpy as np
-import time
 
 
 class EDX:
@@ -200,9 +199,8 @@ class EDT:
                     break
                 else:
                     i += 1
-        #print(i)
-        offset = i * (self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.nr_zdata
-                      * self.associated_edx.data_per_variable)
+        # print(i)
+        offset = i * (self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.nr_zdata * self.associated_edx.data_per_variable)
         offset += z_level * (self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.data_per_variable)
         offset *= 4  # size of float32
         if found:
@@ -216,7 +214,7 @@ class EDT:
                 for n in range(self.associated_edx.data_per_variable):
                     idx = (y * self.associated_edx.data_per_variable * self.associated_edx.nr_xdata) + (x * self.associated_edx.data_per_variable) + n
                     self.specified_data[x, y, n] = self.edt_file[idx]
-                    #print(self.edt_file[idx])
+                    # print(self.edt_file[idx])
 
     def load_defined_data_dem(self):
         defined_data_3d = np.empty(
@@ -227,13 +225,13 @@ class EDT:
                 for x in range(self.associated_edx.nr_xdata):
                     defined_data_3d[x, y, z] = self.edt_file[idx]
                     idx += 1
-                    #print(self.edt_file[idx])
+                    # print(self.edt_file[idx])
 
         for x in range(self.associated_edx.nr_xdata):
             for y in range(self.associated_edx.nr_ydata):
                 for n in range(self.associated_edx.data_per_variable):
                     if (self.dem_offset[x, y] + self.z) < self.associated_edx.nr_zdata:
-                        self.specified_data[x, y, n] = defined_data_3d[x, y, self.dem_offset[x,y] + self.z]
+                        self.specified_data[x, y, n] = defined_data_3d[x, y, self.dem_offset[x, y] + self.z]
                     else:
                         self.specified_data[x, y, n] = defined_data_3d[x, y, self.associated_edx.nr_zdata - 1]
 
@@ -246,7 +244,7 @@ class EDT:
                 for x in range(self.associated_edx.nr_xdata):
                     terrain_data_3d[x, y, z] = self.edt_file[idx]
                     idx += 1
-                    #print(self.edt_file[idx])
+                    # print(self.edt_file[idx])
 
         for x in range(self.associated_edx.nr_xdata):
             for y in range(self.associated_edx.nr_ydata):
@@ -254,7 +252,7 @@ class EDT:
                 for z in range(self.associated_edx.nr_zdata):
                     if round(terrain_data_3d[x, y, z]) == self.demID:
                         foundK = z + 1
-                    self.dem_offset[x,y] = foundK
+                    self.dem_offset[x, y] = foundK
 
     def init_data_dict(self):
         for arr in range(len(self.associated_edx.name_variables)):
@@ -267,13 +265,10 @@ class EDT:
                     for x in range(self.associated_edx.nr_xdata):
                         for n in range(self.associated_edx.data_per_variable):
                             idx = (
-                                    arr * self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.nr_zdata * self.associated_edx.data_per_variable) \
-                                  + (
-                                              z * self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.data_per_variable) \
-                                  + (y * self.associated_edx.nr_xdata * self.associated_edx.data_per_variable) + (
-                                              x * self.associated_edx.data_per_variable) + n
+                                arr * self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.nr_zdata * self.associated_edx.data_per_variable) \
+                                + (
+                                z * self.associated_edx.nr_xdata * self.associated_edx.nr_ydata * self.associated_edx.data_per_variable) \
+                                + (y * self.associated_edx.nr_xdata * self.associated_edx.data_per_variable) + (
+                                x * self.associated_edx.data_per_variable) + n
                             data_array[x, y, z, n] = self.edt_file[idx]
             self.data_dict[var] = data_array
-
-
-

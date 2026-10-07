@@ -190,7 +190,7 @@ class SIMX:
                 if '<turbulenceModel>' in row:
                     self.Turbulence.turbulenceModel = int(row.split(">", 1)[1].split("<", 1)[0].strip())
                 elif '<TKELimit>' in row:
-                    self.Turbulence.TKELimit = int(row.split(">", 1)[1].split("<", 1)[0].strip())                    
+                    self.Turbulence.TKELimit = int(row.split(">", 1)[1].split("<", 1)[0].strip())
             elif section == 'FullForcing':
                 if not self.FuFoSelected:
                     self.FuFoSelected = True

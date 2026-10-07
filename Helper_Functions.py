@@ -1,7 +1,7 @@
 import datetime as dt
-from .NetCDF import *
+from .NetCDF import NetCDF
 from qgis.core import QgsColorRampShader
-from .Const_defines import *
+from .Const_defines import C_COLOR_SCALE_INTERPOLATION, C_COLOR_SCALE_MODE
 from os import path
 
 

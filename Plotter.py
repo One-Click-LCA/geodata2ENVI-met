@@ -1,7 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from .Dataseries_handler import *
-from .Const_defines import *
+from .Dataseries_handler import dataseries
+from .Const_defines import (C_NODATA_VALUE, C_METHOD_MEAN, C_METHOD_MEDIAN,
+                            C_SERIES_A_COLOR, C_SERIES_B_COLOR,
+                            C_DRAW_NEW_DAY_LINE, C_NEW_DAY_COLOR,
+                            C_PRINT_SOURCE, C_PRINT_SOURCE_FONTSIZE)
 
 
 class Plotter:

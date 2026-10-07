@@ -3,6 +3,8 @@
 # Change the values here to update each relevant line of code to the new value #
 ################################################################################
 
+from qgis.core import Qgis
+
 C_NODATA_VALUE = -999.0
 
 C_COLOR_SCALE_STEPS = 20
@@ -23,14 +25,33 @@ C_SAMPLING_METHOD = 1
 
 C_TERRAIN_ID = 2
 
-# Cross-version Qt field-type constants for QgsField.
-# QGIS 3 / PyQt5: QVariant.Type.X is available.
-# QGIS 4 / PyQt6: QVariant.Type does not exist; QgsField expects QMetaType.Type.X.
-try:
-    from qgis.PyQt.QtCore import QVariant as _QVariant
-    FIELD_TYPE_INT = _QVariant.Type.Int
-    FIELD_TYPE_STRING = _QVariant.Type.String
-except (AttributeError, ImportError):
+# Vector layer geometry types, matching QGIS' Qgis.GeometryType enum
+# (Point = 0, Line = 1, Polygon = 2). Compared against QgsVectorLayer.geometryType().
+C_VECTORLAYER_TYPE_POINT = 0
+C_VECTORLAYER_TYPE_POLYGON = 2
+
+# Aggregation method used by the data-series comparison plots.
+C_METHOD_MEAN = 0
+C_METHOD_MEDIAN = 1
+
+# Plot appearance settings for the data-series comparison plots.
+C_SERIES_A_COLOR = 'blue'
+C_SERIES_B_COLOR = 'red'
+C_DRAW_NEW_DAY_LINE = True
+C_NEW_DAY_COLOR = 'grey'
+C_PRINT_SOURCE = True
+C_PRINT_SOURCE_FONTSIZE = 8
+
+# Field-type constants for QgsField.
+# QGIS >= 3.38 deprecated the QVariant.Type constructor of QgsField in favour of
+# QMetaType.Type; earlier versions only accept QVariant.Type. Gate on the QGIS
+# version so the non-deprecated form is used where available while staying
+# compatible down to the minimum supported QGIS (see metadata.txt).
+if Qgis.versionInt() >= 33800:
     from qgis.PyQt.QtCore import QMetaType as _QMetaType
     FIELD_TYPE_INT = _QMetaType.Type.Int
     FIELD_TYPE_STRING = _QMetaType.Type.QString
+else:
+    from qgis.PyQt.QtCore import QVariant as _QVariant
+    FIELD_TYPE_INT = _QVariant.Type.Int
+    FIELD_TYPE_STRING = _QVariant.Type.String

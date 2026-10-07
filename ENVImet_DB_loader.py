@@ -16,10 +16,10 @@ class EnviProjects:
         self.userpathmode = 0
         self.projects = []
         self.usersettings = os.getenv('APPDATA').replace('\\', '/') + '/ENVI-met/usersettings.setx'
-        #print(self.usersettings)
+        # print(self.usersettings)
         if os.path.exists(self.usersettings):
             self.usersettingsFound = True
-            #print(self.usersettingsFound)
+            # print(self.usersettingsFound)
             self.load_usersettings()
             self.sysDB_path = self.userpathinfo.rsplit('/', 1)[0] + '/sys.basedata/database.edb'
             self.userDB_path = self.userpathinfo + '/userdatabase.edb'
@@ -32,10 +32,10 @@ class EnviProjects:
         settings = open(self.usersettings, 'br')
         for row in settings:
             row = row.decode('cp1252')
-            #print(row)
+            # print(row)
             if '<absolute_path>' in row:
                 self.workspace = row.split(">", 1)[1].split("<", 1)[0].replace('\\', '/').strip()
-                #print(self.workspace)
+                # print(self.workspace)
             if '<selectedPython>' in row:
                 self.selectedPython = row.split(">", 1)[1].split("<", 1)[0].replace('\\', '/').strip()
             if ('<userpathinfo>' in row) and ('</userpathinfo>' in row):
@@ -62,13 +62,13 @@ class EnviProjects:
                         new_project.description = row.split(">", 1)[1].split("<", 1)[0]
                     if '<useProjectDB>' in row:
                         new_project.useProjectDB = bool(row.split(">", 1)[1].split("<", 1)[0].strip())
-                #if new_project.useProjectDB and os.path.exists(new_project.projectPath + '/projectdatabase.edb'):
+                # if new_project.useProjectDB and os.path.exists(new_project.projectPath + '/projectdatabase.edb'):
                 #    new_project.DB = ENVImetDB(filepath=self.sysDB_path, use_project_db=True, filepath_project_db=new_project.projectPath + '/projectdatabase.edb')
-                #else:
+                # else:
                 #    new_project.DB = self.sys_db
                 self.projects.append(new_project)
                 info_file.close()
-            #self.load_projects(p)
+            # self.load_projects(p)
 
 
 class Project:
@@ -82,15 +82,15 @@ class Project:
 
 class ENVImetDB:
     def __init__(self, filepath, use_project_db: bool = False, filepath_project_db: str = '', filepath_user_db: str = ''):
-        #self.DB = open(filepath, 'br')
-        #self.DB = self.get_np_array(self.DB)
-        #if use_project_db:
+        # self.DB = open(filepath, 'br')
+        # self.DB = self.get_np_array(self.DB)
+        # if use_project_db:
         #    self.project_DB = open(filepath_project_db, 'br')
         #    self.project_DB = self.get_np_array(self.project_DB)
-        #elif os.path.exists(filepath_user_db):
+        # elif os.path.exists(filepath_user_db):
         #    self.user_DB = open(filepath_user_db, 'br')
         #    self.user_DB = self.get_np_array(self.user_DB)
-        #print(filepath)
+        # print(filepath)
         self.use_project_db = use_project_db
 
         self.filetype = ''
@@ -109,7 +109,7 @@ class ENVImetDB:
         self.greening_dict = {}
         self.plant3d_dict = {}
         self.sources_dict = {}
-        #print(filepath)
+        # print(filepath)
         self.load_data(filepath)
         if self.use_project_db:
             self.load_data(filepath_project_db)
@@ -118,18 +118,18 @@ class ENVImetDB:
 
     @staticmethod
     def get_np_array(db):
-        l = []
+        lines = []
         for row in db:
             row = row.decode('cp1252')
-            l.append(row)
-        return np.asarray(l, dtype=str)
+            lines.append(row)
+        return np.asarray(lines, dtype=str)
 
     def load_data(self, database_path):
         databaseF = open(database_path, 'br')
         database = self.get_np_array(databaseF)
         count = 0
         for row in range(len(database)):
-            if row + count == len(database)-1:
+            if row + count == len(database) - 1:
                 # we reached last line of database and need to break the loop manually
                 break
 

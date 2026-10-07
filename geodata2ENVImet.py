@@ -1,28 +1,25 @@
-from logging import info
-
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QThread, pyqtSignal
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QThread, Qt, QDate, QTime
+from qgis.PyQt import QtCore
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QProgressBar
-from qgis.core import QgsProject, Qgis, QgsField, QgsMapLayerProxyModel, QgsPoint, QgsVectorLayer, QgsRectangle, \
-    QgsFeatureRequest, QgsFieldProxyModel, QgsMessageLog, QgsRasterLayer, QgsStyle
-from qgis.PyQt.QtCore import *
+from qgis.PyQt.QtWidgets import QAction, QFileDialog
+from qgis.core import (Qgis, QgsField, QgsMapLayerProxyModel, QgsVectorLayer,
+                       QgsFieldProxyModel, QgsRasterLayer)
 
-# Initialize Qt resources from file resources.py
-from .resources import *
+# Initialize the bundled Qt resources (icons etc.); importing resources.py has
+# the side effect of calling qInitResources().
+from . import resources  # noqa: F401
 # Import the code for the dialog
 from .geodata2ENVImet_dialog import Geo2ENVImetDialog
 import os.path
-from .Const_defines import FIELD_TYPE_INT, FIELD_TYPE_STRING
-from .ENVImet_DB_loader import *
-from .Worker import *
-from .EDX_EDT import *
+from .Const_defines import FIELD_TYPE_INT, FIELD_TYPE_STRING, C_NODATA_VALUE
+from .ENVImet_DB_loader import ENVImetDB, EnviProjects
+from .Worker import Worker
 from datetime import datetime
 from qgis.PyQt import QtWidgets
-from qgis.PyQt.QtWidgets import QMessageBox, QListWidget, QListWidgetItem
+from qgis.PyQt.QtWidgets import QMessageBox, QListWidgetItem
 import os
 import subprocess
-from .Helper_Functions import *
-from .Dataseries_handler import *
+from .Dataseries_handler import dataseries
 
 
 class Geo2ENVImet:
@@ -488,7 +485,7 @@ class Geo2ENVImet:
                 self.thread.exit()  # Tells the thread’s event loop to exit with a return code.
                 self.thread.quit()  # Tells the thread’s event loop to exit with return code 0 (success). Equivalent to calling exit (0).
                 self.thread.wait()  # Blocks the thread until https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html#PySide6.QtCore.PySide6.QtCore.QThread.wait
-        except:
+        except Exception:
             pass
 
     def startWorkerCalcVertExt(self):  # method to start the worker thread
@@ -518,7 +515,7 @@ class Geo2ENVImet:
             self.worker.dEMLayer = self.dlg.cb_demLayer.currentLayer()
         if not (self.dlg.cb_demBand.currentBand() is None):
             self.worker.dEMBand = self.dlg.cb_demBand.currentBand()
-        
+
         self.worker.bTop_UseCustom = self.dlg.chk_bTop.isChecked()
         self.worker.bTop_custom = self.dlg.se_bTop.value()
 
@@ -937,7 +934,7 @@ class Geo2ENVImet:
     def start_db_manager(self):
         if self.enviProjects is not None:
             filepath = self.enviProjects.installPath + "win64/DBManager.exe"
-            process_id = os.spawnv(os.P_NOWAIT, filepath, ["-someFlag", "someOtherFlag"])
+            os.spawnv(os.P_NOWAIT, filepath, ["-someFlag", "someOtherFlag"])
         else:
             self.iface.messageBar().pushMessage("Error",
                                                 "Could not find a local ENVI-met installation / workspace to load "
@@ -1183,9 +1180,7 @@ class Geo2ENVImet:
             # check if there is a itemText. Otherwise, the current index is a placeholder
             if item.text() != ' ':
                 # check if the selected variable state is 'Only Series A' or 'Comparable'
-                if ((dataseries.SelectedVariableState == 'Only Series A')
-                    or (dataseries.SelectedVariableState == 'Comparable')) \
-                        and item.checkState():
+                if ((dataseries.SelectedVariableState == 'Only Series A') or (dataseries.SelectedVariableState == 'Comparable')) and item.checkState():
                     dataseries.mergedList[i].checkedA = True
                     dataseries.CheckCount += 1
                 else:
@@ -1200,9 +1195,7 @@ class Geo2ENVImet:
             # check if there is a itemText. Otherwise, the current index is a placeholder
             if item.text() != ' ':
                 # check if the selected variable state is 'Only Series B' or 'Comparable'
-                if ((dataseries.SelectedVariableState == 'Only Series B')
-                    or (dataseries.SelectedVariableState == 'Comparable')) \
-                        and item.checkState():
+                if ((dataseries.SelectedVariableState == 'Only Series B') or (dataseries.SelectedVariableState == 'Comparable')) and item.checkState():
                     dataseries.mergedList[i].checkedB = True
                     dataseries.CheckCount += 1
                 else:
@@ -1381,24 +1374,24 @@ class Geo2ENVImet:
             rowI = 0
             textList = []
             for row in info_file:
-                #row = row.decode('ansi')
+                # row = row.decode('ansi')
                 if '<project_description>' in row:
                     startRow = rowI
                 if '</project_description>' in row:
                     endRow = rowI
                 rowI += 1
                 textList.append(row.strip())
-            #print(startRow)
-            #print(endRow)
+            # print(startRow)
+            # print(endRow)
             # info_file.close()
             # info_file = open(projectFolder + '/project.infoX')
             # content = info_file.readlines()
             for a in range(startRow, endRow):
-                #print(textList[a])
+                # print(textList[a])
                 if '<name>' in textList[a]:
                     my_project_name = textList[a].split(">", 1)[1].split("<", 1)[0].strip()
 
-            #print(my_project_name)
+            # print(my_project_name)
             info_file.close()
         if my_project_name != '':
             if projectFolder in simx_file:
@@ -1426,17 +1419,17 @@ class Geo2ENVImet:
             # os.system("cmd /c {command}")
             # subprocess.run(["start", "/wait", "cmd", "/K", command, "arg /?\^"], shell=True)
             # os.system('start /wait cmd /c ' + f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            #envicore_path = envicore_path.replace('envicore_console.exe', 'core.exe')
-            #print(envicore_path)
-            #print(f'SIMX-file: {simx_file}" ' f'{envicore_path} {workspace} {my_project_name} {simx_file}')
+            # envicore_path = envicore_path.replace('envicore_console.exe', 'core.exe')
+            # print(envicore_path)
+            # print(f'SIMX-file: {simx_file}" ' f'{envicore_path} {workspace} {my_project_name} {simx_file}')
             # orig: replaced with secure subprocess call
-            if os.name == 'nt': # Check if running on Windows
+            if os.name == 'nt':  # Check if running on Windows
                 subprocess.Popen(
                     [envicore_path, workspace, my_project_name, simx_file],
                     creationflags=subprocess.CREATE_NEW_CONSOLE
                 )
-            else: # Fallback for non-Windows environments
-                subprocess.Popen([envicore_path, workspace, my_project_name, simx_file])      
+            else:  # Fallback for non-Windows environments
+                subprocess.Popen([envicore_path, workspace, my_project_name, simx_file])
             # print(f'SIMX-file: {simx_file}" ' f'{envicore_path} {workspace} {my_project_name} {simx_file}')
             # command = f'{envicore_path} {workspace} {my_project_name} {simx_file}'
             # os.system("start /wait cmd /c {command}")
@@ -2080,23 +2073,14 @@ class Geo2ENVImet:
                 # checked = 2
                 summary_checkBox.setCheckState(Qt.CheckState.Checked)
         elif summary_checkBox == self.dlg.cb_summary_surfaces:
-            if (self.dlg.rb_surfRaster.isChecked()
-                and (self.dlg.cb_MapLayerRasterSurf.currentLayer() is None)) \
-                    or (self.dlg.rb_surfVector.isChecked()
-                        and (self.dlg.cb_surfLayer.currentLayer() is None
-                             or ((self.dlg.cb_surfID.currentField() == "") and not (self.dlg.chk_surf.isChecked())))):
+            if (self.dlg.rb_surfRaster.isChecked() and (self.dlg.cb_MapLayerRasterSurf.currentLayer() is None)) or (self.dlg.rb_surfVector.isChecked() and (self.dlg.cb_surfLayer.currentLayer() is None or ((self.dlg.cb_surfID.currentField() == "") and not (self.dlg.chk_surf.isChecked())))):
                 # unchecked = 0
                 summary_checkBox.setCheckState(Qt.CheckState.Unchecked)
             else:
                 # checked = 2
                 summary_checkBox.setCheckState(Qt.CheckState.Checked)
         elif summary_checkBox == self.dlg.cb_summary_simpleplants:
-            if (self.dlg.rb_simplePlantsRaster.isChecked()
-                and self.dlg.cb_MapLayerRasterSP.currentLayer() is None) \
-                    or (self.dlg.rb_simplePlantsVector.isChecked()
-                        and (self.dlg.cb_simplePlantLayer.currentLayer() is None
-                             or (self.dlg.cb_simplePlantID.currentField() == "") and not (
-                            self.dlg.chk_simplePlantID.isChecked()))):
+            if (self.dlg.rb_simplePlantsRaster.isChecked() and self.dlg.cb_MapLayerRasterSP.currentLayer() is None) or (self.dlg.rb_simplePlantsVector.isChecked() and (self.dlg.cb_simplePlantLayer.currentLayer() is None or (self.dlg.cb_simplePlantID.currentField() == "") and not (self.dlg.chk_simplePlantID.isChecked()))):
                 # unchecked = 0
                 summary_checkBox.setCheckState(Qt.CheckState.Unchecked)
             else:

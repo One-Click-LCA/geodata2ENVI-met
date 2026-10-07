@@ -2,7 +2,7 @@ import math
 import sys
 import json
 import time
-from math import degrees, floor, trunc, sqrt, acos
+from math import degrees, floor
 
 import numpy as np
 import requests
@@ -11,24 +11,30 @@ from pyproj.database import query_utm_crs_info
 from osgeo import gdal, osr
 
 from qgis.PyQt.QtCore import Qt, QObject, QDate, QTime, pyqtSignal
-from qgis.core import QgsProject, Qgis, QgsField, QgsMapLayerProxyModel, QgsPoint, QgsPointXY, QgsVectorLayer, QgsRectangle, \
-    QgsFeatureRequest, QgsFieldProxyModel, QgsMessageLog, QgsRasterLayer, QgsMapSettings, QgsPolygon, QgsGeometry, QgsFeature, \
-    QgsCoordinateReferenceSystem, QgsRasterFileWriter, QgsRasterPipe, QgsRaster, QgsRasterBlock, QgsSingleBandGrayRenderer, \
-    QgsContrastEnhancement, QgsRasterBandStats, QgsProcessing, QgsVectorFileWriter, QgsProviderRegistry, QgsGeometryUtils, \
-    QgsRasterShader, QgsColorRampShader, QgsSingleBandPseudoColorRenderer, QgsStyle, QgsRasterRendererUtils, QgsSymbolLayer, \
-    QgsMarkerSymbolLayer, QgsFontMarkerSymbolLayer, QgsProperty, QgsGraduatedSymbolRenderer, QgsVectorFieldSymbolLayer
+from qgis.core import (QgsProject, Qgis, QgsField, QgsPoint, QgsPointXY, QgsVectorLayer, QgsRectangle,
+                       QgsFeatureRequest, QgsMessageLog, QgsRasterLayer, QgsGeometry, QgsFeature,
+                       QgsRasterBlock, QgsRasterBandStats, QgsProcessing,
+                       QgsRasterShader, QgsColorRampShader,
+                       QgsSingleBandPseudoColorRenderer, QgsStyle, QgsRasterRendererUtils)
+# QgsGeometryUtils.angleBetweenThreePoints() is deprecated from QGIS 3.40 on;
+# the identical method lives on QgsGeometryUtilsBase (added in QGIS 3.34).
+try:
+    from qgis.core import QgsGeometryUtilsBase
+except ImportError:
+    from qgis.core import QgsGeometryUtils as QgsGeometryUtilsBase
 import processing
 from processing.tools import dataobjects
 
-from .resources import *
-from .geodata2ENVImet_dialog import Geo2ENVImetDialog
-from .ENVImet_DB_loader import *
-from .simx_manager import *
-from .EDX_EDT import *
-from .NetCDF import *
-from .Helper_Functions import *
-from .Dataseries_handler import *
-from .Const_defines import *
+from .simx_manager import SIMX
+from .Helper_Functions import get_color_scale_interpolation, get_color_scale_mode
+from .Dataseries_handler import dataseries, timestep, merged_timestep
+from .Const_defines import (C_NODATA_VALUE, C_SAMPLING_METHOD,
+                            C_COLOR_SCALE_STEPS, C_COLOR_SCALE_NAME,
+                            C_COLOR_SCALE_INVERT, C_COLOR_SCALE_USE_CUSTOM,
+                            C_COLOR_SCALE_CUSTOM_PATH,
+                            C_VECTORLAYER_TYPE_POINT, C_VECTORLAYER_TYPE_POLYGON,
+                            FIELD_TYPE_INT, FIELD_TYPE_STRING)
+from .worker_helpers import get_UTM_zone, getQGIS_crs
 
 
 class Building:
@@ -212,6 +218,9 @@ class Worker(QObject):
         # Set the printoptions to maximum to print whole arrays of all following print functions
         np.set_printoptions(threshold=sys.maxsize)
 
+    # ==================================================================
+    # Geometry, rotation and processing helpers
+    # ==================================================================
     def rotate_layer(self, lay: QgsVectorLayer, is_sub_area_layer: bool):
         if (lay is None) or (lay.name() == "notAvail"):
             return ""
@@ -239,6 +248,41 @@ class Worker(QObject):
                     f_geo = f.geometry()
                     self.subAreaExtent = f_geo.boundingBox()
         return rlayerFN
+
+    def _extract_and_rotate(self, layer):
+        """Clip ``layer`` to the (non-rotated) sub-area, then rotate the result
+        back into alignment with the sub-area grid. Returns the rotated layer."""
+        context = self.get_safe_processing_context()
+        extracted = processing.run("qgis:extractbylocation",
+                                   {"INPUT": layer,
+                                    "PREDICATE": [0],
+                                    "INTERSECT": self.subAreaLayer_nonRot,
+                                    "OUTPUT": 'TEMPORARY_OUTPUT'},
+                                   context=context)
+        return self.rotate_layer(extracted["OUTPUT"], False)
+
+    def _clip_raster_by_mask(self, input_layer, mask, crs, context):
+        """Clip a raster to ``mask`` (used as cutline), using ``crs`` for both
+        source and target. Returns the processing OUTPUT (raster file path)."""
+        return processing.run("gdal:cliprasterbymasklayer",
+                              {'INPUT': input_layer,
+                               'MASK': mask,
+                               'SOURCE_CRS': crs,
+                               'TARGET_CRS': crs,
+                               'TARGET_EXTENT': None,
+                               'NODATA': C_NODATA_VALUE,
+                               'ALPHA_BAND': False,
+                               'CROP_TO_CUTLINE': True,
+                               'KEEP_RESOLUTION': False,
+                               'SET_RESOLUTION': False,
+                               'X_RESOLUTION': None,
+                               'Y_RESOLUTION': None,
+                               'MULTITHREADING': False,
+                               'OPTIONS': '',
+                               'DATA_TYPE': 0,  # use input data-type
+                               'EXTRA': '',
+                               'OUTPUT': 'TEMPORARY_OUTPUT'},
+                              context=context)['OUTPUT']
 
     def get_modelrot(self):
         """
@@ -311,7 +355,7 @@ class Worker(QObject):
 
                 for v in f_geo.vertices():
                     numVert = numVert + 1
-        #print(numVert)
+        # print(numVert)
         if f_geo is None:
             self.msg = 'Error:Please provide a layer featuring a single rectangular polygon (4 vertices).'
         else:
@@ -329,7 +373,7 @@ class Worker(QObject):
                 R1 = f_geo.vertexAt(1)          # second vertex
                 R2 = f_geo.vertexAt(2)          # third vertex
                 R3 = f_geo.vertexAt(3)          # last vertrex
-                R4 = f_geo.vertexAt(4)          # last vertrex                
+                R4 = f_geo.vertexAt(4)          # last vertrex
                 '''
                 print(R0)
                 print(R1)
@@ -337,18 +381,18 @@ class Worker(QObject):
                 print(R3)
                 print(R4)
                 '''
-                R0_R2_ang = degrees(QgsGeometryUtils.angleBetweenThreePoints(R0.x(),R0.y(),R1.x(),R1.y(),R2.x(),R2.y()))
-                R1_R3_ang = degrees(QgsGeometryUtils.angleBetweenThreePoints(R1.x(),R1.y(),R2.x(),R2.y(),R3.x(),R3.y()))
-                R2_R0_ang = degrees(QgsGeometryUtils.angleBetweenThreePoints(R2.x(),R2.y(),R3.x(),R3.y(),R0.x(),R0.y()))
-                R3_R1_ang = degrees(QgsGeometryUtils.angleBetweenThreePoints(R3.x(),R3.y(),R4.x(),R4.y(),R1.x(),R1.y()))
-                
-                #print(R0_R2_ang)
-                #print(R1_R3_ang)
-                #print(R2_R0_ang)
-                #print(R3_R1_ang)
-                
+                R0_R2_ang = degrees(QgsGeometryUtilsBase.angleBetweenThreePoints(R0.x(), R0.y(), R1.x(), R1.y(), R2.x(), R2.y()))
+                R1_R3_ang = degrees(QgsGeometryUtilsBase.angleBetweenThreePoints(R1.x(), R1.y(), R2.x(), R2.y(), R3.x(), R3.y()))
+                R2_R0_ang = degrees(QgsGeometryUtilsBase.angleBetweenThreePoints(R2.x(), R2.y(), R3.x(), R3.y(), R0.x(), R0.y()))
+                R3_R1_ang = degrees(QgsGeometryUtilsBase.angleBetweenThreePoints(R3.x(), R3.y(), R4.x(), R4.y(), R1.x(), R1.y()))
+
+                # print(R0_R2_ang)
+                # print(R1_R3_ang)
+                # print(R2_R0_ang)
+                # print(R3_R1_ang)
+
                 # angle [deg] of inaccuracy that is acceptable to be used as subarea
-                allowedInaccuracy = 5   
+                allowedInaccuracy = 5
 
                 # as the angles might be 270 or 90 depending on the orientation of the rect -> so we need to account for that
                 while R0_R2_ang > allowedInaccuracy:
@@ -358,12 +402,12 @@ class Worker(QObject):
                 while R2_R0_ang > allowedInaccuracy:
                     R2_R0_ang = R2_R0_ang - 90
                 while R3_R1_ang > allowedInaccuracy:
-                    R3_R1_ang = R3_R1_ang - 90              
+                    R3_R1_ang = R3_R1_ang - 90
 
-                #print(R0_R2_ang)
-                #print(R1_R3_ang)
-                #print(R2_R0_ang)
-                #print(R3_R1_ang)                                                                  
+                # print(R0_R2_ang)
+                # print(R1_R3_ang)
+                # print(R2_R0_ang)
+                # print(R3_R1_ang)
 
                 if (abs(R0_R2_ang) > allowedInaccuracy) or (abs(R1_R3_ang) > allowedInaccuracy) or (abs(R2_R0_ang) > allowedInaccuracy) or (abs(R3_R1_ang) > allowedInaccuracy):
                     self.msg = 'Warning:Please check that the subarea is of rectangular form. The use of the "Shape Digitizing Toolbar" is recommended.'
@@ -412,14 +456,14 @@ class Worker(QObject):
 
                 # alternative to model rotation calc
                 RXY0 = QgsPointXY(R0.x(), R0.y())
-                RXY3 = QgsPointXY(R3.x(), R3.y())    
-                # calculate azi angle 0=North   
-                model_rot_azi = RXY0.azimuth(RXY3)  
-                # correct the angle to match ENVI-met 
+                RXY3 = QgsPointXY(R3.x(), R3.y())
+                # calculate azi angle 0=North
+                model_rot_azi = RXY0.azimuth(RXY3)
+                # correct the angle to match ENVI-met
                 model_rot_corr = -1 * (model_rot_azi - 90)
                 if model_rot_azi < -90:
                     model_rot_corr = model_rot_corr - 360
-                #print("azi_corr:" + str(model_rot_corr))
+                # print("azi_corr:" + str(model_rot_corr))
 
                 self.model_rot = model_rot_corr
                 self.rotate_layer(self.subAreaLayer, True)
@@ -428,6 +472,9 @@ class Worker(QObject):
                 # write a msg to the user
                 self.msg = 'Error:Please provide a layer featuring a single rectangular polygon (4 vertices). The use of the "Shape Digitizing Toolbar" is recommended.'
 
+    # ==================================================================
+    # Location, elevation and CRS lookups (online)
+    # ==================================================================
     def get_time_zone_geonames(self):
         QgsMessageLog.logMessage("Getting Timezone...", 'ENVI-met', level=Qgis.MessageLevel.Info)
         try:
@@ -460,16 +507,6 @@ class Worker(QObject):
         except Exception:
             return self.refHeightDEM
 
-    def get_UTM_zone(self, lon: int, lat: int):
-        zoneNum = trunc((floor(lon + 180) / 6) + 1)
-        zoneHemi = "N"
-        if lat >= 0:
-            zoneHemi = "N"
-        else:
-            zoneHemi = "S"
-        res = str(zoneNum) + ' ' + zoneHemi 
-        return res
-    
     def find_crs_auth_id(self, crs_description: str) -> int:
         """
         Gets the auth_id from a CRS description.
@@ -484,32 +521,24 @@ class Worker(QObject):
 
         list_of_crs = query_utm_crs_info()
         result = [c[1] for c in list_of_crs if c[0] == "EPSG" and c[2] == f'{crs_description}']
-        
+
         return int(result[0]) if len(result) else -1
 
+    # ==================================================================
+    # Gridding: buildings
+    # ==================================================================
     def buildBInfo(self):
         self.s_buildingDict.clear()
         if (self.bLayer.name() == "notAvail") or ((not self.bTop_UseCustom) and (self.bTop == "")) or (self.bLayer.getFeatures() is None):
             return self.s_buildingDict
 
         QgsMessageLog.logMessage("Started: Generating Building Info section...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        
+
         # reproject to UTM
         self.bLayer = self.reprojectLayerToUTM(self.bLayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", 
-                                   {"INPUT": self.bLayer,
-                                    "PREDICATE": [0],
-                                    "INTERSECT": self.subAreaLayer_nonRot,
-                                    "OUTPUT": 'TEMPORARY_OUTPUT'},
-                                    context=context)
-        #QgsProject.instance().addMapLayer(aTmpLayer["OUTPUT"])
-
-
         # rotate the building layer, so it is aligned with the subarea-layer again
-        #self.bLayer_rot = self.rotate_layer(self.bLayer, False)
-        self.bLayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
+        self.bLayer_rot = self._extract_and_rotate(self.bLayer)
 
         # start editing
         self.bLayer_rot.startEditing()
@@ -533,10 +562,10 @@ class Worker(QObject):
         self.bLayer_rot.startEditing()
         i = 1
         for f in self.bLayer_rot.getFeatures():
-            f[bNumber_int] = i 
+            f[bNumber_int] = i
             # reset the users fid field if present
             if fID_user_present:
-                f[fID_user] = i 
+                f[fID_user] = i
             self.bLayer_rot.updateFeature(f)
             i += 1
         self.bLayer_rot.commitChanges()
@@ -547,11 +576,11 @@ class Worker(QObject):
         self.bLayer_rot.startEditing()
         i = 1
         for f in self.bLayer_rot.getFeatures():
-            f[bNumber_int] = i 
+            f[bNumber_int] = i
             self.bLayer_rot.updateFeature(f)
             i += 1
         self.bLayer_rot.commitChanges()
-        #QgsProject.instance().addMapLayer(self.bLayer_rot)
+        # QgsProject.instance().addMapLayer(self.bLayer_rot)
 
         # we now have building numbers for all elements, but we should only write the ones that are in our extent
         for f in self.bLayer_rot.getFeatures():
@@ -593,8 +622,8 @@ class Worker(QObject):
                 newBuild = Building(BldInternalNum=s_bNumber, BldName=s_bName, BldWallMat=s_bWall, BldRoofMat=s_bRoof,
                                     BldFacadeGreen=s_bGWall, BldRoofGreen=s_bGRoof, BldBPS=s_bBPS, BldInModelArea=True)
                 self.s_buildingDict[s_bNumber] = newBuild
-                #print(self.s_buildingDict[s_bNumber].BuildingInternalNumber)
-                #print('as')
+                # print(self.s_buildingDict[s_bNumber].BuildingInternalNumber)
+                # print('as')
 
         QgsMessageLog.logMessage("Finished: Generating Building Info section.", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -637,26 +666,20 @@ class Worker(QObject):
         QgsMessageLog.logMessage("Finished: Gridding Building Bottoms.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return grid1_int_array
 
+    # ==================================================================
+    # Gridding: surfaces and raster processing
+    # ==================================================================
     def raster_surface_from_vector(self):
         if self.surfLayer.name() == "notAvail":
             tmpAr = np.empty(shape=(self.JJ, self.II), dtype='<U6')
             return tmpAr.fill(self.startSurfID)
 
         QgsMessageLog.logMessage("Started: Gridding Surfaces...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        
+
         # reproject to UTM
         self.surfLayer = self.reprojectLayerToUTM(self.surfLayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", {
-            "INPUT": self.surfLayer,
-            "PREDICATE": [0],
-            "INTERSECT": self.subAreaLayer_nonRot,
-            "OUTPUT": 'TEMPORARY_OUTPUT'}, context=context
-                       )
-
-        #self.surfLayer_rot = self.rotate_layer(self.surfLayer, False)
-        self.surfLayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
+        self.surfLayer_rot = self._extract_and_rotate(self.surfLayer)
 
         self.surfLayer_rot = self.reorgFID(self.surfLayer_rot)
 
@@ -866,9 +889,9 @@ class Worker(QObject):
                                       "OUTPUT": 'TEMPORARY_OUTPUT'},
                                      context=context)
         rlayerFN_clip = rlayer_clip['OUTPUT']
-        #print(rlayerFN_clip)
-        #QgsProject.instance().addMapLayer(rlayerFN_clip)
-        #self.addRasterLayer(rlayerFN_clip,"surf_debug")
+        # print(rlayerFN_clip)
+        # QgsProject.instance().addMapLayer(rlayerFN_clip)
+        # self.addRasterLayer(rlayerFN_clip,"surf_debug")
 
         # Now we resample the clipped raster layer to the defined grid-size (min(dx, dy))
         rlayer_resample = processing.run("gdal:warpreproject",
@@ -896,11 +919,11 @@ class Worker(QObject):
         # To make it rectangular again, we need to add NULL-values around the rotated raster to create a rectangle again
         # This is possible with a naive call of GDAL-Warp (Resample)
         """
-        R1---------------R2 
-        |   /--------     | 
+        R1---------------R2
+        |   /--------     |
         |  /-------  ---/ |
-        |         -----/  | 
-        R0---------------R3 
+        |         -----/  |
+        R0---------------R3
         """
 
         reshaped = processing.run("gdal:warpreproject",
@@ -963,9 +986,9 @@ class Worker(QObject):
 
     def raster_surface_from_raster(self):
         # reproject to UTM
-        outFN = self.reprojectRasterLayerToUTM(self.surfLayer_raster)        
+        outFN = self.reprojectRasterLayerToUTM(self.surfLayer_raster)
         self.surfLayer_raster = QgsRasterLayer(outFN, "surfTMP_UTM")
-     
+
         grid1_str_array, grid1_int_array = self.get_data_from_raster(self.surfLayer_raster)
 
         for i in range(grid1_str_array.shape[0]):
@@ -1071,7 +1094,7 @@ class Worker(QObject):
 
     def raster_simple_plants_from_raster(self):
         # reproject to UTM
-        outFN = self.reprojectRasterLayerToUTM(self.plant1dLayer_raster)        
+        outFN = self.reprojectRasterLayerToUTM(self.plant1dLayer_raster)
         self.plant1dLayer_raster = QgsRasterLayer(outFN, "spTMP_UTM")
         grid1_str_array, grid1_int_array = self.get_data_from_raster(self.plant1dLayer_raster)
 
@@ -1091,7 +1114,10 @@ class Worker(QObject):
                         grid1_str_array[i, j] = ''
 
         return grid1_str_array
-    
+
+    # ==================================================================
+    # Grid conforming and rasterization helpers
+    # ==================================================================
     def reorgFID(self, input_layer):
         # some users report that (understandably) if the fID is identical for all features, then the rasterizer does not work
         # thus first we check if there is a field called "fid"
@@ -1107,11 +1133,11 @@ class Worker(QObject):
             input_layer.startEditing()
             i = 0
             for f in input_layer.getFeatures():
-                f[fID_user] = i 
+                f[fID_user] = i
                 input_layer.updateFeature(f)
                 i += 1
             input_layer.commitChanges()
-            #QgsProject.instance().addMapLayer(input_layer)
+            # QgsProject.instance().addMapLayer(input_layer)
         return input_layer
 
     def _conform_to_grid(self, arr):
@@ -1163,6 +1189,9 @@ class Worker(QObject):
             return grid1_int_array.astype(str), grid1_int_array
         return grid1_int_array
 
+    # ==================================================================
+    # Gridding: vegetation
+    # ==================================================================
     def raster_simple_plants_from_vector(self):
         if self.plant1dLayer.name() == "notAvail":
             tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
@@ -1173,16 +1202,7 @@ class Worker(QObject):
         # reproject to UTM
         self.plant1dLayer = self.reprojectLayerToUTM(self.plant1dLayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", {
-            "INPUT": self.plant1dLayer, \
-            "PREDICATE": [0], \
-            "INTERSECT": self.subAreaLayer_nonRot, \
-            "OUTPUT": 'TEMPORARY_OUTPUT'},
-            context=context
-                       )
-        #self.plant1dLayer_rot = self.rotate_layer(self.plant1dLayer, False)
-        self.plant1dLayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
+        self.plant1dLayer_rot = self._extract_and_rotate(self.plant1dLayer)
 
         self.plant1dLayer_rot = self.reorgFID(self.plant1dLayer_rot)
 
@@ -1253,24 +1273,13 @@ class Worker(QObject):
         if (self.plant3dLayer.name() == "notAvail") or (self.plant3dID == "") \
                 or (self.plant3dLayer_rot.getFeatures() is None):
             return self.s_treeList
-        
+
         # reproject to UTM
         self.plant3dLayer = self.reprojectLayerToUTM(self.plant3dLayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", {
-            "INPUT": self.plant3dLayer, \
-            "PREDICATE": [0], \
-            "INTERSECT": self.subAreaLayer_nonRot, \
-            "OUTPUT": 'TEMPORARY_OUTPUT'},
-            context=context
-                       )
-        #QgsProject.instance().addMapLayer(aTmpLayer["OUTPUT"])
-
         QgsMessageLog.logMessage("Started: Gridding 3D Plants...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        #self.plant3dLayer_rot = self.rotate_layer(self.plant3dLayer, False)
-        self.plant3dLayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
-        
+        self.plant3dLayer_rot = self._extract_and_rotate(self.plant3dLayer)
+
         self.plant3dLayer_rot = self.reorgFID(self.plant3dLayer_rot)
 
         aTmpDict = {}
@@ -1336,6 +1345,9 @@ class Worker(QObject):
         QgsMessageLog.logMessage("Finished: Gridding 3D Plants.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return self.s_treeList
 
+    # ==================================================================
+    # Terrain / DEM
+    # ==================================================================
     def getDEM(self, interpolate: int = 1):
         # Get non-rotated subArea extent for clipping the warp
         spFeats = self.subAreaLayer_nonRot.getFeatures()
@@ -1412,10 +1424,7 @@ class Worker(QObject):
             x1c = np.clip(x1, 0, w - 1)
             y0c = np.clip(y0, 0, h - 1)
             y1c = np.clip(y1, 0, h - 1)
-            sampled = (dem_arr[y0c, x0c] * (1 - fx) * (1 - fy) +
-                       dem_arr[y0c, x1c] * fx * (1 - fy) +
-                       dem_arr[y1c, x0c] * (1 - fx) * fy +
-                       dem_arr[y1c, x1c] * fx * fy)
+            sampled = (dem_arr[y0c, x0c] * (1 - fx) * (1 - fy) + dem_arr[y0c, x1c] * fx * (1 - fy) + dem_arr[y1c, x0c] * (1 - fx) * fy + dem_arr[y1c, x1c] * fx * fy)
         else:
             xi = np.clip(np.round(px).astype(int), 0, w - 1)
             yi = np.clip(np.round(py).astype(int), 0, h - 1)
@@ -1440,6 +1449,9 @@ class Worker(QObject):
 
         return grid1_float.astype(int)
 
+    # ==================================================================
+    # Gridding: sources
+    # ==================================================================
     def rasterSrcP(self):
         if self.srcPLayer.name() == "notAvail":
             tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
@@ -1449,17 +1461,7 @@ class Worker(QObject):
         # reproject to UTM
         self.srcPLayer = self.reprojectLayerToUTM(self.srcPLayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", {
-            "INPUT": self.srcPLayer, \
-            "PREDICATE": [0], \
-            "INTERSECT": self.subAreaLayer_nonRot, \
-            "OUTPUT": 'TEMPORARY_OUTPUT'},
-            context=context
-                       )
-
-        #self.srcPLayer_rot = self.rotate_layer(self.srcPLayer, False)
-        self.srcPLayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
+        self.srcPLayer_rot = self._extract_and_rotate(self.srcPLayer)
 
         self.srcPLayer_rot = self.reorgFID(self.srcPLayer_rot)
 
@@ -1527,16 +1529,7 @@ class Worker(QObject):
         # reproject to UTM
         self.srcLLayer = self.reprojectLayerToUTM(self.srcLLayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", {
-            "INPUT": self.srcLLayer, \
-            "PREDICATE": [0], \
-            "INTERSECT": self.subAreaLayer_nonRot, \
-            "OUTPUT": 'TEMPORARY_OUTPUT'},
-            context=context
-                       )
-        #self.srcLLayer_rot = self.rotate_layer(self.srcLLayer, False)
-        self.srcLLayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
+        self.srcLLayer_rot = self._extract_and_rotate(self.srcLLayer)
 
         self.srcLLayer_rot = self.reorgFID(self.srcLLayer_rot)
 
@@ -1603,20 +1596,11 @@ class Worker(QObject):
             return tmpAr.fill("")
 
         QgsMessageLog.logMessage("Started: Gridding Sources (Areas)...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        
+
         # reproject to UTM
         self.srcALayer = self.reprojectLayerToUTM(self.srcALayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", {
-            "INPUT": self.srcALayer, \
-            "PREDICATE": [0], \
-            "INTERSECT": self.subAreaLayer_nonRot, \
-            "OUTPUT": 'TEMPORARY_OUTPUT'},
-            context=context
-                       )
-        #self.srcALayer_rot = self.rotate_layer(self.srcALayer, False)
-        self.srcALayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
+        self.srcALayer_rot = self._extract_and_rotate(self.srcALayer)
 
         self.srcALayer_rot = self.reorgFID(self.srcALayer_rot)
 
@@ -1676,6 +1660,9 @@ class Worker(QObject):
         QgsMessageLog.logMessage("Finished: Gridding Sources (Areas).", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return grid1_str_array
 
+    # ==================================================================
+    # Gridding: receptors
+    # ==================================================================
     def buildReceptors(self):
         self.s_recList.clear()
         if self.recLayer.name() == "notAvail":
@@ -1684,19 +1671,8 @@ class Worker(QObject):
         # reproject to UTM
         self.recLayer = self.reprojectLayerToUTM(self.recLayer, False)
 
-        context = self.get_safe_processing_context()
-        aTmpLayer = processing.run("qgis:extractbylocation", {
-            "INPUT": self.recLayer, \
-            "PREDICATE": [0], \
-            "INTERSECT": self.subAreaLayer_nonRot, \
-            "OUTPUT": 'TEMPORARY_OUTPUT'},
-            context=context
-                       )
-        #QgsProject.instance().addMapLayer(aTmpLayer["OUTPUT"])
-
         QgsMessageLog.logMessage("Started: Gridding Receptors...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        #self.recLayer_rot = self.rotate_layer(self.recLayer, False)
-        self.recLayer_rot = self.rotate_layer(aTmpLayer["OUTPUT"], False)
+        self.recLayer_rot = self._extract_and_rotate(self.recLayer)
 
         # get all items in the vector layer
         if self.recLayer_rot.getFeatures() is None:
@@ -1735,8 +1711,8 @@ class Worker(QObject):
                 self.recLayer_rot.updateFeature(f)
             self.recLayer_rot.commitChanges()
             grid1_str_array, grid1_int_array = self.rasterize_gdal(input_layer=self.recLayer_rot, field=ID_int, get_strArray=True)
-            #QgsVectorFileWriter.writeAsVectorFormat(self.recLayer_rot, "C:/Users/simonhe/AppData/Local/Temp/processing_HWIddK/760a68c50707482880b5084165a1d3b3/a", "UTF-8", self.recLayer_rot.crs(), "ESRI Shapefile")
-            #print(grid1_str_array)
+            # QgsVectorFileWriter.writeAsVectorFormat(self.recLayer_rot, "C:/Users/simonhe/AppData/Local/Temp/processing_HWIddK/760a68c50707482880b5084165a1d3b3/a", "UTF-8", self.recLayer_rot.crs(), "ESRI Shapefile")
+            # print(grid1_str_array)
 
         ENVI_ID_int = -1
         if self.recID_UseCustom:
@@ -1766,29 +1742,32 @@ class Worker(QObject):
 
         QgsMessageLog.logMessage("Finished: Gridding Receptors.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return self.s_recList
-    
+
+    # ==================================================================
+    # Reprojection helpers
+    # ==================================================================
     def reprojectLayerToUTM(self, aLayer, isSubAreaLayer: bool):
-        #print(aLayer.crs().authid().split(":")[1])
-        if not(aLayer.crs().authid().split(":")[1] == str(4326)):
-            #print('in_if')
+        # print(aLayer.crs().authid().split(":")[1])
+        if not (aLayer.crs().authid().split(":")[1] == str(4326)):
+            # print('in_if')
             proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
             x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
             lon, lat = proj.transform(x1, y1)
         else:
             for feature in aLayer.getFeatures():
                 geom = feature.geometry()
-                
+
                 # Calculate the centroid of the polygon
                 centroid = geom.centroid().asPoint()
-                
+
                 # Extract latitude (y) and longitude (x) from the centroid
                 lon = centroid.x()
                 lat = centroid.y()
-                #print(f"Centroid - Longitude: {lon}, Latitude: {lat}")                                                                            
-        aUTMZone = self.get_UTM_zone(lon, lat)
-        #print(aUTMZone)
-        auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ',''))
-        #print(auth_id) 
+                # print(f"Centroid - Longitude: {lon}, Latitude: {lat}")
+        aUTMZone = get_UTM_zone(lon, lat)
+        # print(aUTMZone)
+        auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ', ''))
+        # print(auth_id)
 
         # fill vars only if subAreaLayer
         if isSubAreaLayer:
@@ -1809,10 +1788,10 @@ class Worker(QObject):
         proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
         x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
         lon, lat = proj.transform(x1, y1)
-        aUTMZone = self.get_UTM_zone(lon, lat)
-        #print(aUTMZone)
-        auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ',''))
-        #print(auth_id) 
+        aUTMZone = get_UTM_zone(lon, lat)
+        # print(aUTMZone)
+        auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ', ''))
+        # print(auth_id)
 
         context = self.get_safe_processing_context()
         reshaped = processing.run("gdal:warpreproject",
@@ -1828,15 +1807,18 @@ class Worker(QObject):
                                    'EXTRA': '',
                                    'OUTPUT': 'TEMPORARY_OUTPUT'},
                                   context=context)
-        #print(reshaped['OUTPUT'])
+        # print(reshaped['OUTPUT'])
         return reshaped['OUTPUT']
 
+    # ==================================================================
+    # INX export
+    # ==================================================================
     def saveINX(self):
         QgsMessageLog.logMessage("--- Started Exporting INX-File ---", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
         # precaution -> we always reproject to UTM
-        self.subAreaLayer_nonRot = self.reprojectLayerToUTM(self.subAreaLayer_nonRot,True)
-        self.subAreaLayer = self.reprojectLayerToUTM(self.subAreaLayer,True)   
+        self.subAreaLayer_nonRot = self.reprojectLayerToUTM(self.subAreaLayer_nonRot, True)
+        self.subAreaLayer = self.reprojectLayerToUTM(self.subAreaLayer, True)
         self.get_modelrot()
 
         # fill data
@@ -1855,10 +1837,10 @@ class Worker(QObject):
 
         self.lon = lon
         self.lat = lat
-        self.UTMZone = self.get_UTM_zone(lon, lat)
+        self.UTMZone = get_UTM_zone(lon, lat)
 
         auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + self.UTMZone.replace(' ',''))
-        print(auth_id) 
+        print(auth_id)
 
         context = dataobjects.createContext()
         context.setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)                #QgsFeatureRequest.GeometrySkipInvalid
@@ -2020,7 +2002,7 @@ class Worker(QObject):
             dem_int_array = np.zeros(shape=(self.JJ, self.II), dtype=int)
         else:
             QgsMessageLog.logMessage("Started: Gridding Terrain...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-            dem_int_array = self.getDEM(interpolate = self.dEMInterpol)
+            dem_int_array = self.getDEM(interpolate=self.dEMInterpol)
             QgsMessageLog.logMessage("Finished: Gridding Terrain.", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
         self.elevation = self.get_elevation_geonames()
@@ -2103,17 +2085,17 @@ class Worker(QObject):
 
         self.progress.emit(80)
         QgsMessageLog.logMessage("Converting Data to ENVI-met model area...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-       
+
         # finally convert to matrix
         bTop_str_matrix = np.array2string(bTop_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
         bTop_str_matrix = bTop_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-        
+
         bBot_str_matrix = np.array2string(bBot_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
         bBot_str_matrix = bBot_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-        
+
         bNumber_str_matrix = np.array2string(bNumber_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
         bNumber_str_matrix = bNumber_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-        
+
         bFixHeight_str_matrix = np.array2string(bFixHeight_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
         bFixHeight_str_matrix = bFixHeight_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
 
@@ -2123,7 +2105,7 @@ class Worker(QObject):
 
         # plants
         simplePlant_str_matrix = np.array2string(simplePlant_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        simplePlant_str_matrix = simplePlant_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'","").replace("NULL", "")
+        simplePlant_str_matrix = simplePlant_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'", "").replace("NULL", "")
 
         # surfaces
         surf_str_matrix = np.array2string(surf_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
@@ -2143,7 +2125,7 @@ class Worker(QObject):
             print("    <version>4</version>", file=output_file)
             print("    <revisiondate>  </revisiondate>", file=output_file)
             print("    <remark> model created by QGIS plugin, additional settings: def roof material: " + self.defaultWall + "; def wall material: " + self.defaultRoof + "; clear buildings cells at border: " + str(self.removeBBorder) + "; leveled buildings in DEM: " + str(self.bLeveled) + "; building height not fixed: " + str(self.bNOTFixedH) + "; starting surface: " + self.startSurfID + "; remove veg from buildings: " + str(self.removeVegBuild) + " </remark>", file=output_file)
-            print("    <fileInfo> model created by QGIS plugin </fileInfo>", file=output_file)                                                                                                                                                                                
+            print("    <fileInfo> model created by QGIS plugin </fileInfo>", file=output_file)
             print("    <encryptionlevel>0</encryptionlevel>", file=output_file)
             print("  </Header>", file=output_file)
             print("  <baseData>", file=output_file)
@@ -2271,7 +2253,7 @@ class Worker(QObject):
             print("     </terrainheight>", file=output_file)
             print("  </dem>", file=output_file)
             print("  <sources2D>", file=output_file)
-            print("     <ID_sources type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">", file = output_file)
+            print("     <ID_sources type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">", file=output_file)
             print(src_str_matrix, file=output_file)
             print("     </ID_sources>", file=output_file)
             print("  </sources2D>", file=output_file)
@@ -2308,12 +2290,15 @@ class Worker(QObject):
         self.progress.emit(100)
         QgsMessageLog.logMessage("--- Finished Exporting INX-File ---", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
+    # ==================================================================
+    # Vertical extent and grid preview
+    # ==================================================================
     def calc_vert_ext(self):
         if self.subAreaLayer.name() == "notAvail":
             return
 
-        self.subAreaLayer_nonRot = self.reprojectLayerToUTM(self.subAreaLayer_nonRot,True)
-        self.subAreaLayer = self.reprojectLayerToUTM(self.subAreaLayer,True)   
+        self.subAreaLayer_nonRot = self.reprojectLayerToUTM(self.subAreaLayer_nonRot, True)
+        self.subAreaLayer = self.reprojectLayerToUTM(self.subAreaLayer, True)
         self.get_modelrot()
 
         self.II = round((self.subAreaExtent.xMaximum() - self.subAreaExtent.xMinimum()) / self.dx)
@@ -2326,17 +2311,7 @@ class Worker(QObject):
             self.bLayer = self.reprojectLayerToUTM(self.bLayer, False)
 
             # only rotate buildings inside subarea
-            context = self.get_safe_processing_context()
-            aTmpLayer = processing.run("qgis:extractbylocation", 
-                                       {"INPUT": self.bLayer,
-                                        "PREDICATE": [0],
-                                        "INTERSECT": self.subAreaLayer_nonRot,
-                                        "OUTPUT": 'TEMPORARY_OUTPUT'},
-                                        context=context)
-            #bLayer = self.rotate_layer(self.bLayer, False)
-            bLayer = self.rotate_layer(aTmpLayer["OUTPUT"], False)
-
-            layer_provider = bLayer.dataProvider()
+            bLayer = self._extract_and_rotate(self.bLayer)
 
             # get all items in the vector layer BUILDINGS
             if bLayer.getFeatures() is None:
@@ -2349,18 +2324,18 @@ class Worker(QObject):
                         bHeight = f[self.bTop]
                         if bHeight > self.maxHeightB:
                             self.maxHeightB = bHeight
-        #print(self.bTop_UseCustom)
+        # print(self.bTop_UseCustom)
         if self.bTop_UseCustom:
-            #print("here")
-            #print(self.bTop_custom)
+            # print("here")
+            # print(self.bTop_custom)
             self.maxHeightB = self.bTop_custom
 
         # now get the terrain max height
         if (self.dEMLayer.name() == "notAvail") or (self.dEMBand < 1):
             self.maxHeightDEM = 0
         else:
-            #self.maxHeightDEM = 0
-            self.getDEM(interpolate = 0)  # self.maxHeightDEM is now filled
+            # self.maxHeightDEM = 0
+            self.getDEM(interpolate=0)  # self.maxHeightDEM is now filled
 
         self.maxHeightTotal = self.maxHeightB + self.maxHeightDEM
 
@@ -2371,8 +2346,8 @@ class Worker(QObject):
             self.finished.emit()
             return
         else:
-            self.subAreaLayer_nonRot = self.reprojectLayerToUTM(self.subAreaLayer_nonRot,True)
-            self.subAreaLayer = self.reprojectLayerToUTM(self.subAreaLayer,True)   
+            self.subAreaLayer_nonRot = self.reprojectLayerToUTM(self.subAreaLayer_nonRot, True)
+            self.subAreaLayer = self.reprojectLayerToUTM(self.subAreaLayer, True)
             self.get_modelrot()
             self.II = round((self.subAreaExtent.xMaximum() - self.subAreaExtent.xMinimum()) / self.dx)
             self.JJ = round((self.subAreaExtent.yMaximum() - self.subAreaExtent.yMinimum()) / self.dy)
@@ -2447,17 +2422,33 @@ class Worker(QObject):
             self.zLvl_center[k] = self.zLvl_bot[k] + 0.5 * self.dzAr[k]
         self.finished.emit()
 
+    # ==================================================================
+    # Worker lifecycle
+    # ==================================================================
     def run_save_inx(self):
         self.progress.emit(0)
         t1 = time.time()
         self.saveINX()
         t2 = time.time()
-        print('Time to save the INX-file: ' + str(t2-t1))
+        print('Time to save the INX-file: ' + str(t2 - t1))
         # report via pyqt-signal that run method of Worker-Class has been finished
         self.finished.emit()
 
     def stop(self):
         self.stopworker = True
+
+    # ENVI-met stores temperatures in Kelvin; the UI works in degrees Celsius.
+    # The 273.14999 offset is kept exactly as the original code used it.
+    # ==================================================================
+    # SIMX (simulation config) load/save
+    # ==================================================================
+    @staticmethod
+    def _k_to_c(kelvin):
+        return kelvin - 273.14999
+
+    @staticmethod
+    def _c_to_k(celsius):
+        return celsius + 273.14999
 
     def load_simx(self, ui, filepath):
         simx = SIMX()
@@ -2511,8 +2502,8 @@ class Worker(QObject):
                 if simx.SimpleForcing.Qrel[i] > h_max:
                     h_max = simx.SimpleForcing.Qrel[i]
                     h_max_time = i
-            t_min -= 273.14999
-            t_max -= 273.14999
+            t_min = self._k_to_c(t_min)
+            t_max = self._k_to_c(t_max)
             ui.sb_timeMaxT.setValue(t_max_time)
             ui.sb_timeMinT.setValue(t_min_time)
             ui.sb_timeMaxHum.setValue(h_max_time)
@@ -2545,7 +2536,7 @@ class Worker(QObject):
                 ui.rb_forceT_yes.setChecked(True)
             else:
                 ui.rb_forceT_no.setChecked(True)
-                ui.sb_initT.setValue(simx.mainData.T_H - 273.14999)
+                ui.sb_initT.setValue(self._k_to_c(simx.mainData.T_H))
 
             if simx.FullForcing.forceRadClouds == 1:
                 ui.rb_forceRadC_yes.setChecked(True)
@@ -2569,7 +2560,7 @@ class Worker(QObject):
         else:
             # simx.otherSelected
             ui.rb_other.setChecked(True)
-            ui.sb_otherAirT.setValue(simx.mainData.T_H - 273.14999)
+            ui.sb_otherAirT.setValue(self._k_to_c(simx.mainData.T_H))
             ui.sb_otherHum.setValue(simx.mainData.Q_2m)
             ui.sb_otherHum2500.setValue(simx.mainData.Q_H)
             ui.sb_otherWS.setValue(simx.mainData.windSpeed)
@@ -2596,10 +2587,10 @@ class Worker(QObject):
             ui.sb_soilHumMiddle.setValue(simx.Soil.waterMiddlelayer)
             ui.sb_soilHumLower.setValue(simx.Soil.waterDeeplayer)
             ui.sb_soilHumBedrock.setValue(simx.Soil.waterBedrocklayer)
-            ui.sb_soilTupper.setValue(simx.Soil.tempUpperlayer - 273.14999)
-            ui.sb_soilTmiddle.setValue(simx.Soil.tempMiddlelayer - 273.14999)
-            ui.sb_soilTlower.setValue(simx.Soil.tempDeeplayer - 273.14999)
-            ui.sb_soilTbedrock.setValue(simx.Soil.tempBedrocklayer - 273.14999)
+            ui.sb_soilTupper.setValue(self._k_to_c(simx.Soil.tempUpperlayer))
+            ui.sb_soilTmiddle.setValue(self._k_to_c(simx.Soil.tempMiddlelayer))
+            ui.sb_soilTlower.setValue(self._k_to_c(simx.Soil.tempDeeplayer))
+            ui.sb_soilTbedrock.setValue(self._k_to_c(simx.Soil.tempBedrocklayer))
         if simx.RadiationSelected:
             ui.chk_radiationSim.setCheckState(Qt.CheckState.Checked)
 
@@ -2668,8 +2659,8 @@ class Worker(QObject):
 
         if simx.BuildingSelected:
             ui.chk_buildingsSim.setCheckState(Qt.CheckState.Checked)
-            ui.sb_bldTmp.setValue(simx.Building.indoorTemp - 273.14999)
-            ui.sb_bldSurfTmp.setValue(simx.Building.surfTemp - 273.14999)
+            ui.sb_bldTmp.setValue(self._k_to_c(simx.Building.indoorTemp))
+            ui.sb_bldSurfTmp.setValue(self._k_to_c(simx.Building.surfTemp))
             if simx.Building.indoorConst == 1:
                 ui.rb_indoorYes.setChecked(True)
             else:
@@ -2809,7 +2800,7 @@ class Worker(QObject):
 
             # temperature and humidity values
             for i in range(24):
-                simx.SimpleForcing.TAir[i] = float(ui.tableWidget.item(i, 0).text()) + 273.14999
+                simx.SimpleForcing.TAir[i] = self._c_to_k(float(ui.tableWidget.item(i, 0).text()))
                 simx.SimpleForcing.Qrel[i] = float(ui.tableWidget.item(i, 1).text())
 
         elif ui.rb_fullForcing.isChecked():
@@ -2820,7 +2811,7 @@ class Worker(QObject):
                 simx.FullForcing.forceT = 1
             else:
                 simx.FullForcing.forceT = 0
-                simx.mainData.T_H = ui.sb_initT.value() + 273.14999
+                simx.mainData.T_H = self._c_to_k(ui.sb_initT.value())
 
             if ui.rb_forceWind_yes.isChecked():
                 simx.FullForcing.forceWind = 1
@@ -2866,7 +2857,7 @@ class Worker(QObject):
             simx.Clouds.lowClouds = ui.sb_otherLowclouds.value()
             simx.Clouds.middleClouds = ui.sb_otherMediumclouds.value()
             simx.Clouds.highClouds = ui.sb_otherHighclouds.value()
-            simx.mainData.T_H = ui.sb_otherAirT.value() + 273.14999
+            simx.mainData.T_H = self._c_to_k(ui.sb_otherAirT.value())
             simx.mainData.Q_2m = ui.sb_otherHum.value()
             simx.mainData.Q_H = ui.sb_otherHum2500.value()
             simx.mainData.windSpeed = ui.sb_otherWS.value()
@@ -2893,10 +2884,10 @@ class Worker(QObject):
             simx.Soil.waterMiddlelayer = ui.sb_soilHumMiddle.value()
             simx.Soil.waterDeeplayer = ui.sb_soilHumLower.value()
             simx.Soil.waterBedrocklayer = ui.sb_soilHumBedrock.value()
-            simx.Soil.tempUpperlayer = ui.sb_soilTupper.value() + 273.14999
-            simx.Soil.tempMiddlelayer = ui.sb_soilTmiddle.value() + 273.14999
-            simx.Soil.tempDeeplayer = ui.sb_soilTlower.value() + 273.14999
-            simx.Soil.tempBedrocklayer = ui.sb_soilTbedrock.value() + 273.14999
+            simx.Soil.tempUpperlayer = self._c_to_k(ui.sb_soilTupper.value())
+            simx.Soil.tempMiddlelayer = self._c_to_k(ui.sb_soilTmiddle.value())
+            simx.Soil.tempDeeplayer = self._c_to_k(ui.sb_soilTlower.value())
+            simx.Soil.tempBedrocklayer = self._c_to_k(ui.sb_soilTbedrock.value())
         if simx.RadiationSelected:
             simx.SolarAdjust.SWFactor = 1
             simx.RadScheme.RayTraceStepWidthHighRes = 0.25
@@ -2947,8 +2938,8 @@ class Worker(QObject):
             simx.RadScheme.MRTProjFac = 2
 
         if simx.BuildingSelected:
-            simx.Building.indoorTemp = ui.sb_bldTmp.value() + 273.14999
-            simx.Building.surfTemp = ui.sb_bldSurfTmp.value() + 273.14999
+            simx.Building.indoorTemp = self._c_to_k(ui.sb_bldTmp.value())
+            simx.Building.surfTemp = self._c_to_k(ui.sb_bldSurfTmp.value())
             if ui.rb_indoorYes.isChecked():
                 simx.Building.indoorConst = 1
             else:
@@ -3047,6 +3038,9 @@ class Worker(QObject):
 
         self.finished.emit()
 
+    # ==================================================================
+    # Data-series comparison and map output
+    # ==================================================================
     def add_layers_to_map(self):
         self.progress.emit(0)
         count = 0
@@ -3100,8 +3094,8 @@ class Worker(QObject):
         tstpB = merged.timestepB
         targetResA = min(min(tstpA.spacing_x[len(tstpA.spacing_x) // 2], tstpA.spacing_y[len(tstpA.spacing_y) // 2]), 1.00)
         targetResB = min(min(tstpB.spacing_x[len(tstpB.spacing_x) // 2], tstpB.spacing_y[len(tstpB.spacing_y) // 2]), 1.00)
-        crs, qgs_crsA = self.getQGIS_crs(tstpA)
-        crs, qgs_crsB = self.getQGIS_crs(tstpB)
+        crs, qgs_crsA = getQGIS_crs(tstpA)
+        crs, qgs_crsB = getQGIS_crs(tstpB)
         if (targetResA != targetResB) or (qgs_crsA != qgs_crsB):
             targetRes = min(targetResA, targetResB)
 
@@ -3154,50 +3148,15 @@ class Worker(QObject):
                     polygon_layer = self.create_polygon_from_point(raster_layer=comp_layerA, target_res=targetRes,
                                                                    crs=qgs_crsA)
 
-                clipped_A = processing.run("gdal:cliprasterbymasklayer",
-                                           {'INPUT': comp_layerA,
-                                            'MASK': polygon_layer,
-                                            'SOURCE_CRS': qgs_crsA,
-                                            'TARGET_CRS': qgs_crsA,
-                                            'TARGET_EXTENT': None,
-                                            'NODATA': C_NODATA_VALUE,
-                                            'ALPHA_BAND': False,
-                                            'CROP_TO_CUTLINE': True,
-                                            'KEEP_RESOLUTION': False,
-                                            'SET_RESOLUTION': False,
-                                            'X_RESOLUTION': None,
-                                            'Y_RESOLUTION': None,
-                                            'MULTITHREADING': False,
-                                            'OPTIONS': '',
-                                            'DATA_TYPE': 0,  # use input data-type
-                                            'EXTRA': '',
-                                            'OUTPUT': 'TEMPORARY_OUTPUT'},
-                                           context=context)
-                comp_layerA = QgsRasterLayer(clipped_A['OUTPUT'], f'{dataseries.SelectedVariable}_{tstpA.date}_'
-                                                                  f'{tstpA.time}_SeriesA', 'gdal')
+                clipped_A = self._clip_raster_by_mask(comp_layerA, polygon_layer, qgs_crsA, context)
+                comp_layerA = QgsRasterLayer(clipped_A, f'{dataseries.SelectedVariable}_{tstpA.date}_'
+                                             f'{tstpA.time}_SeriesA', 'gdal')
                 comp_layerA.setCrs(qgs_crsA)
 
-                clipped_B = processing.run("gdal:cliprasterbymasklayer",
-                                           {'INPUT': comp_layerB,
-                                            'MASK': polygon_layer,
-                                            'SOURCE_CRS': qgs_crsA,  # crsA is correct here
-                                            'TARGET_CRS': qgs_crsA,  # .. and here
-                                            'TARGET_EXTENT': None,
-                                            'NODATA': C_NODATA_VALUE,
-                                            'ALPHA_BAND': False,
-                                            'CROP_TO_CUTLINE': True,
-                                            'KEEP_RESOLUTION': False,
-                                            'SET_RESOLUTION': False,
-                                            'X_RESOLUTION': None,
-                                            'Y_RESOLUTION': None,
-                                            'MULTITHREADING': False,
-                                            'OPTIONS': '',
-                                            'DATA_TYPE': 0,  # use input data-type
-                                            'EXTRA': '',
-                                            'OUTPUT': 'TEMPORARY_OUTPUT'},
-                                           context=context)
-                comp_layerB = QgsRasterLayer(clipped_B['OUTPUT'], f'{dataseries.SelectedVariable}_{tstpB.date}_'
-                                                                  f'{tstpB.time}_SeriesB', 'gdal')
+                # crsA is correct here (both series aligned to series A's CRS)
+                clipped_B = self._clip_raster_by_mask(comp_layerB, polygon_layer, qgs_crsA, context)
+                comp_layerB = QgsRasterLayer(clipped_B, f'{dataseries.SelectedVariable}_{tstpB.date}_'
+                                             f'{tstpB.time}_SeriesB', 'gdal')
                 comp_layerB.setCrs(qgs_crsA)
 
         # Calculate the delta-layer (A-B) by using the rastercalculator
@@ -3224,7 +3183,7 @@ class Worker(QObject):
                                 'OUTPUT': 'TEMPORARY_OUTPUT'},
                                context=context)
         delta_layer = QgsRasterLayer(delta['OUTPUT'], f'{dataseries.SelectedVariable}_{tstpB.date}_{tstpB.time}_'
-                                                      f'{dataseries.HeightRange}_Delta(A-B)', 'gdal')
+                                     f'{dataseries.HeightRange}_Delta(A-B)', 'gdal')
         delta_layer.setCrs(qgs_crsA)
 
         QgsProject.instance().addMapLayer(delta_layer)
@@ -3281,7 +3240,7 @@ class Worker(QObject):
         extent.setYMinimum(tstp.location_georef_y)
         extent.setXMaximum(tstp.location_georef_x + cols * tstp.spacing_x[len(tstp.spacing_x) // 2])
         extent.setYMaximum(tstp.location_georef_y + rows * tstp.spacing_y[len(tstp.spacing_y) // 2])
-        crs, qgs_crs = self.getQGIS_crs(tstp)
+        crs, qgs_crs = getQGIS_crs(tstp)
         # create and define the context for QGIS- and GDAL-functions
         context = self.get_safe_processing_context()
 
@@ -3403,26 +3362,8 @@ class Worker(QObject):
 
         # Next Step: If the user selected a subarea, we clip the raster to the desired subarea here
         if not (dataseries.SelectedSubArea is None):
-            clipped = processing.run("gdal:cliprasterbymasklayer",
-                                     {'INPUT': rasterlayer_resample,
-                                      'MASK': dataseries.SelectedSubArea,
-                                      'SOURCE_CRS': qgs_crs,
-                                      'TARGET_CRS': qgs_crs,
-                                      'TARGET_EXTENT': None,
-                                      'NODATA': C_NODATA_VALUE,
-                                      'ALPHA_BAND': False,
-                                      'CROP_TO_CUTLINE': True,
-                                      'KEEP_RESOLUTION': False,
-                                      'SET_RESOLUTION': False,
-                                      'X_RESOLUTION': None,
-                                      'Y_RESOLUTION': None,
-                                      'MULTITHREADING': False,
-                                      'OPTIONS': '',
-                                      'DATA_TYPE': 0,  # use input data-type
-                                      'EXTRA': '',
-                                      'OUTPUT': 'TEMPORARY_OUTPUT'},
-                                     context=context)
-            rasterlayer_clipped = QgsRasterLayer(clipped['OUTPUT'],
+            clipped = self._clip_raster_by_mask(rasterlayer_resample, dataseries.SelectedSubArea, qgs_crs, context)
+            rasterlayer_clipped = QgsRasterLayer(clipped,
                                                  f'{dataseries.SelectedVariable}_{tstp.date}_{tstp.time}_'
                                                  f'{dataseries.HeightRange}_Series{series}', 'gdal')
             rasterlayer_clipped.setCrs(qgs_crs)
@@ -3476,18 +3417,10 @@ class Worker(QObject):
             return rasterlayer_final
         else:
             return None
-        
 
-    @staticmethod
-    def getQGIS_crs(tstp: timestep):
-        if tstp.location_georef_lat >= 0:
-            crs = pyproj.CRS.from_string(f'+proj=utm +zone={tstp.location_georef_xy_utmzone} +north')
-        else:
-            crs = pyproj.CRS.from_string(f'+proj=utm +zone={tstp.location_georef_xy_utmzone} +south')
-        qgs_crs = QgsCoordinateReferenceSystem(f'EPSG:{crs.to_authority()[1]}')
-        return crs, qgs_crs
-    
-
+    # ==================================================================
+    # Processing utilities
+    # ==================================================================
     def get_safe_processing_context(self):
         """Creates a processing context compatible with both QGIS 3.4 and QGIS 3.40+"""
         context = dataobjects.createContext()
