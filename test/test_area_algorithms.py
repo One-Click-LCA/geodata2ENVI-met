@@ -43,6 +43,8 @@ class AreaAlgorithmsTest(unittest.TestCase):
         cls.root = fx.write_output_folder(os.path.join(cls.tmp, 'sim_output'))
         cls.shifted = os.path.join(cls.tmp, 'shifted_output')
         fx.write_netcdf(os.path.join(cls.shifted, 'NetCDF', 'sim_001.nc'), x0=fx.X0 + 1.0)
+        cls.levels = os.path.join(cls.tmp, 'levels_output')        # same grid, other vertical levels
+        fx.write_netcdf(os.path.join(cls.levels, 'NetCDF', 'sim_001.nc'), dz=[0.5] * 5 + [2.0, 2.0, 2.0])
         string = import_plugin_module('Const_defines').FIELD_TYPE_STRING
         cls.areas = make_layer('Polygon', f'EPSG:326{fx.ZONE}', [
             (model_polygon(0, 0, 5, 2), ['1', 'Courtyard']),       # cells i 0..1 and half of 2, row 0
@@ -108,6 +110,47 @@ class AreaAlgorithmsTest(unittest.TestCase):
         differences = [r for r in read_csv(result['STATISTICS']) if r['scenario'] == 'A-B']
         self.assertTrue(differences)
         self.assertTrue(all(r['source'] == 'A-B (difference of means)' for r in differences))
+
+    def test_comparison_with_other_vertical_levels(self):
+        """The same k is another height when the levels differ: no cell-by-cell pairing then."""
+        result = self.run_algorithm('areastatistics', VARIABLES='T', RESULTS_B=self.levels)
+        differences = [r for r in read_csv(result['STATISTICS']) if r['scenario'] == 'A-B']
+        self.assertTrue(differences)
+        self.assertTrue(all(r['source'] == 'A-B (difference of means)' for r in differences))
+
+    def test_comparison_across_formats(self):
+        """NetCDF "T" and EDX "Air Temperature" are the same quantity: found by its long name."""
+        for extra in ({}, {'VARIABLES_B': 'Air Temperature'}):
+            with self.subTest(**extra):
+                result = self.run_algorithm('areastatistics', VARIABLES='T', RESULTS_B=self.root,
+                                            SOURCE_B='atmosphere (EDX)', **extra)
+                rows = read_csv(result['STATISTICS'])
+                self.assertEqual({r['variable'] for r in rows}, {'T'})
+                differences = [r for r in rows if r['scenario'] == 'A-B']
+                self.assertEqual(len(differences), 2 * 2)       # 2 areas x 2 time steps, cell by cell
+                self.assertTrue(all(r['source'] == 'A-B' and float(r['mean']) == 0.0 for r in differences))
+
+    def test_variables_b_must_match_a(self):
+        from qgis.core import QgsProcessingException
+        with self.assertRaises(QgsProcessingException):
+            self.run_algorithm('areastatistics', VARIABLES='T, UTCIBiomet', RESULTS_B=self.root,
+                               SOURCE_B='atmosphere (EDX)', VARIABLES_B='Air Temperature')
+
+    def test_a_result_file_instead_of_a_folder(self):
+        result = self.run_algorithm('areastatistics', VARIABLES='T', RESULTS=None,
+                                    RESULTS_FILE=os.path.join(self.root, 'NetCDF', 'sim_001.nc'))
+        self.assertEqual({r['scenario'] for r in read_csv(result['STATISTICS'])}, {'A'})
+
+    def test_text_ids_stay_distinct(self):
+        """"01" and "1" are two areas; "1" becomes a number, "01" stays text."""
+        string = import_plugin_module('Const_defines').FIELD_TYPE_STRING
+        areas = make_layer('Polygon', f'EPSG:326{fx.ZONE}', [
+            (model_polygon(0, 0, 4, 2), ['01', 'first']),
+            (model_polygon(0, 4, 4, 6), ['1', 'second']),
+        ], fields=[('zone', string), ('label', string)])
+        result = self.run_algorithm('areamasks', AREAS=areas)
+        zones = {row['zone_id']: row['zone_name'] for row in read_csv(result['ZONES_CSV'])}
+        self.assertEqual(zones, {'01': 'first', '1': 'second'})
 
     def test_height_range(self):
         result = self.run_algorithm('areastatistics', VARIABLES='T', VERTICAL=1, Z_MIN=0.0, Z_MAX=3.0)

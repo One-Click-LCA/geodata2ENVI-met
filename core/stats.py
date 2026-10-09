@@ -74,11 +74,15 @@ def weighted_stats(values, weights, thresholds=(), class_limits=None):
 
 
 class VariableRequest:
-    def __init__(self, key, long_name, units, kind):
+    """A variable to evaluate. ``key`` is read from the file; ``name`` labels the rows and pairs A with B
+    (results in another format name the same quantity differently, e.g. "T" and "Air Temperature")."""
+
+    def __init__(self, key, long_name, units, kind, name=None):
         self.key = key
         self.long_name = long_name
         self.units = units
         self.kind = kind
+        self.name = name or key
 
 
 def mask_cells(masks):
@@ -97,7 +101,7 @@ def time_series(source, masks, variables, mode, level_text, scenario='A', start=
                 thresholds=(), comfort_classes=True, progress=None, cancelled=None, values_out=None):
     """Statistics rows for every time step of ``source`` (a readers.Source) between ``start`` and ``end``.
 
-    :param values_out: optional dict filled with {(datetime, variable key): cell values}, for A - B.
+    :param values_out: optional dict filled with {(datetime, variable name): cell values}, for A - B.
     """
     rows = []
     masks = [m for m in masks if len(m)]
@@ -118,7 +122,7 @@ def time_series(source, masks, variables, mode, level_text, scenario='A', start=
             else:
                 continue
             if values_out is not None:
-                values_out[(step.datetime, var.key)] = values
+                values_out[(step.datetime, var.name)] = values
             limits = class_limits_for(var.key, var.long_name) if comfort_classes else None
             for mask, part in zip(masks, slices):
                 stats = weighted_stats(values[part], mask.weight, thresholds, limits)
@@ -133,11 +137,11 @@ def difference_series(values_a, values_b, masks, variables, mode, level_text, th
     rows = []
     masks = [m for m in masks if len(m)]
     _, _, _, slices = mask_cells(masks)
-    for (moment, key), a in sorted(values_a.items(), key=lambda item: (item[0][0], item[0][1])):
-        b = values_b.get((moment, key))
+    for (moment, name), a in sorted(values_a.items(), key=lambda item: (item[0][0], item[0][1])):
+        b = values_b.get((moment, name))
         if b is None:
             continue
-        var = next((v for v in variables if v.key == key), None)
+        var = next((v for v in variables if v.name == name), None)
         if var is None:
             continue
         difference = a - b
@@ -166,7 +170,7 @@ def mean_differences(rows_a, rows_b):
 
 def _row(scenario, source_name, mask, var, level_text, moment, stats, mode):
     row = {'scenario': scenario, 'source': source_name, 'zone_id': mask.zone.zone_id, 'zone_name': mask.zone.name,
-           'variable': var.key, 'long_name': var.long_name, 'unit': var.units, 'level': level_text,
+           'variable': var.name, 'long_name': var.long_name, 'unit': var.units, 'level': level_text,
            'datetime': moment.strftime('%Y-%m-%d %H:%M'), 'date': moment.strftime('%Y-%m-%d'),
            'hour': moment.hour + moment.minute / 60.0}
     weight = stats.pop('weight')

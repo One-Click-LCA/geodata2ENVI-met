@@ -9,17 +9,19 @@ PET, the share of the area in each heat-stress class.
 
 1. Draw the areas as polygons in a new layer, in any coordinate system. Add an
    ID field if you want one result per area; without an ID all polygons form
-   one area called `all`. An optional name field labels the areas.
+   one area called `all`. An optional name field labels the areas. IDs that
+   are numbers stay numbers; text IDs are kept as written, so `01` and `1` are
+   two areas.
 2. Either click **Area statistics...** in the *Load results* tab (it takes over
    series A and B and the selected variable), or open the Processing toolbox,
    group **ENVI-met > Area analysis**:
    * **Area statistics (time series)**: the statistics and the cell lists;
    * **Build area masks**: only the cell lists, plus a preview layer of the
      cells coloured by the share of each cell inside its area.
-3. Choose the results (an ENVI-met output folder; *Results to use* picks the
-   NetCDF output, a report file or EDX files), the variables (default: UTCI),
-   the vertical selection and, optionally, a time window, thresholds and a
-   second set of results B for a comparison.
+3. Choose the results (an ENVI-met output folder, where *Results to use* picks
+   the NetCDF output, a report file or EDX files, or a single result file),
+   the variables (default: UTCI), the vertical selection and, optionally, a
+   time window, thresholds and a second set of results B for a comparison.
 
 The dialog of the plugin does not block QGIS, so you can draw or edit the
 areas while it is open.
@@ -56,9 +58,17 @@ All files are UTF-8 CSV (comma or semicolon) and start with the chosen prefix.
 | `_zones.csv` | Per area: polygon area, the part of it with at least one listed cell, number of columns and cells. |
 | `_grid.json` | The grid the cells refer to, the source files and the settings. |
 
-With results B, the statistics contain the scenarios `A`, `B` and `A-B`. On
-the same grid, `A-B` is computed cell by cell over the cells valid in both
-runs; on different grids it is the difference of the area means.
+With results B, the statistics contain the scenarios `A`, `B` and `A-B`. When
+both runs have the same grid, the same vertical levels and the same terrain,
+`A-B` is computed cell by cell over the cells valid in both runs (different
+buildings are fine); otherwise it is the difference of the area means.
+
+B's variables are found by name: the same key, the same long name (NetCDF
+`T` is called *Air Temperature*, as in the EDX files), or the same name
+without spaces and punctuation (NetCDF `UTCIBiomet` and EDX `UTCI Biomet`).
+Where the two formats name a quantity too differently for that, name B's
+variables under *Variables in B*, in the same order. The rows of B and A-B
+carry A's name.
 
 Percentiles are the smallest value whose cumulative weight reaches the
 percentile (inverted weighted distribution function).

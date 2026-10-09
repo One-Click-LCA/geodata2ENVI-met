@@ -1183,6 +1183,8 @@ class Geo2ENVImet:
         choice = dataseries.SelectedVariable
         if choice is not None and choice.key_a is not None:
             parameters['VARIABLES'] = choice.key_a
+            if 'RESULTS_B' in parameters and choice.key_b is not None and choice.key_b != choice.key_a:
+                parameters['VARIABLES_B'] = choice.key_b       # the same quantity under another name in B
         return parameters
 
     def open_area_statistics(self):

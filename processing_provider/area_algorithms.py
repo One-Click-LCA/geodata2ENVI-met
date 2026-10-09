@@ -15,6 +15,7 @@ from ..core import stats as core_stats, zones as core_zones
 
 VERTICAL_OPTIONS = ['Pedestrian level (terrain + 1.5 m)', 'Height range above ground']
 DELIMITERS = [',', ';']
+RESULT_FILES = 'ENVI-met results (*.nc *.NC *.edx *.EDX);;All files (*.*)'
 
 
 class _AreaAlgorithm(QgsProcessingAlgorithm):
@@ -22,6 +23,7 @@ class _AreaAlgorithm(QgsProcessingAlgorithm):
     ID_FIELD = 'ID_FIELD'
     NAME_FIELD = 'NAME_FIELD'
     RESULTS = 'RESULTS'
+    RESULTS_FILE = 'RESULTS_FILE'
     SOURCE = 'SOURCE'
     VERTICAL = 'VERTICAL'
     Z_MIN = 'Z_MIN'
@@ -42,7 +44,7 @@ class _AreaAlgorithm(QgsProcessingAlgorithm):
     def createInstance(self):
         return type(self)()
 
-    def add_area_parameters(self, results_description='ENVI-met results: output folder or result file'):
+    def add_area_parameters(self, results_label='ENVI-met results'):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.AREAS, 'Analysis areas (polygons)', [QgsProcessing.SourceType.TypeVectorPolygon]))
         self.addParameter(QgsProcessingParameterField(
@@ -50,11 +52,27 @@ class _AreaAlgorithm(QgsProcessingAlgorithm):
             optional=True))
         self.addParameter(QgsProcessingParameterField(
             self.NAME_FIELD, 'Area name field', parentLayerParameterName=self.AREAS, optional=True))
-        self.addParameter(QgsProcessingParameterFile(
-            self.RESULTS, results_description, behavior=QgsProcessingParameterFile.Behavior.Folder))
+        self.add_results_parameters(self.RESULTS, self.RESULTS_FILE, results_label, optional=False)
         self.addParameter(QgsProcessingParameterString(
             self.SOURCE, 'Results to use (e.g. NetCDF, Report_Slice, atmosphere (EDX); empty: NetCDF)',
             defaultValue='', optional=True))
+
+    def add_results_parameters(self, folder_name, file_name, label, optional):
+        """A folder and a file input: Processing's file widget picks either folders or files, not both."""
+        needed = '' if optional else ' (this or a result file)'
+        self.addParameter(QgsProcessingParameterFile(
+            folder_name, f'{label}: output folder{needed}', behavior=QgsProcessingParameterFile.Behavior.Folder,
+            optional=True))
+        self.addParameter(QgsProcessingParameterFile(
+            file_name, f'{label}: or one result file (NetCDF or EDX)',
+            behavior=QgsProcessingParameterFile.Behavior.File, fileFilter=RESULT_FILES, optional=True))
+
+    def results_path(self, parameters, context, folder_name, file_name, required=True):
+        path = (self.parameterAsString(parameters, file_name, context)
+                or self.parameterAsString(parameters, folder_name, context))
+        if required and not path:
+            raise QgsProcessingException('Choose the ENVI-met results: an output folder or a result file.')
+        return path
 
     def add_vertical_parameters(self):
         self.addParameter(QgsProcessingParameterEnum(
@@ -157,7 +175,7 @@ class BuildAreaMasksAlgorithm(_AreaAlgorithm):
 
     def processAlgorithm(self, parameters, context, feedback):
         mode, z_min, z_max = self.vertical(parameters, context)
-        path = self.parameterAsString(parameters, self.RESULTS, context)
+        path = self.results_path(parameters, context, self.RESULTS, self.RESULTS_FILE)
         source, first = self.open_results(path, self.parameterAsString(parameters, self.SOURCE, context), feedback)
         try:
             grid, static = first.grid, first.static_fields()
@@ -181,8 +199,10 @@ class BuildAreaMasksAlgorithm(_AreaAlgorithm):
 
 class AreaStatisticsAlgorithm(_AreaAlgorithm):
     RESULTS_B = 'RESULTS_B'
+    RESULTS_B_FILE = 'RESULTS_B_FILE'
     SOURCE_B = 'SOURCE_B'
     VARIABLES = 'VARIABLES'
+    VARIABLES_B = 'VARIABLES_B'
     START = 'START'
     END = 'END'
     THRESHOLDS = 'THRESHOLDS'
@@ -201,18 +221,23 @@ class AreaStatisticsAlgorithm(_AreaAlgorithm):
                 'percentiles, maximum, the share above thresholds and, for UTCI and PET, the share per '
                 'heat-stress class. Cells cut by an area count with the share of their area inside it; '
                 'only atmosphere cells count. Also writes the mean diurnal cycle and daily summaries. With '
-                'results B, also B and A - B (cell by cell on the same grid, else the difference of the means). '
-                'Variables: short or long names separated by commas; empty means UTCI.')
+                'results B, also B and A - B: cell by cell when both runs have the same grid, levels and '
+                'terrain, else the difference of the means. Variables: short or long names separated by '
+                'commas; empty means UTCI. B\'s variables are found by key, long name or the name without '
+                'spaces; where results in another format name a quantity too differently, name them under '
+                '"Variables in B".')
 
     def initAlgorithm(self, config=None):
-        self.add_area_parameters('ENVI-met results A: output folder or result file')
-        self.addParameter(QgsProcessingParameterFile(
-            self.RESULTS_B, 'ENVI-met results B (optional, for a comparison)',
-            behavior=QgsProcessingParameterFile.Behavior.Folder, optional=True))
+        self.add_area_parameters('ENVI-met results A')
+        self.add_results_parameters(self.RESULTS_B, self.RESULTS_B_FILE,
+                                    'ENVI-met results B (optional, for a comparison)', optional=True)
         self.addParameter(QgsProcessingParameterString(
             self.SOURCE_B, 'Results B to use (empty: NetCDF)', defaultValue='', optional=True))
         self.addParameter(QgsProcessingParameterString(
             self.VARIABLES, 'Variables (comma-separated; empty: UTCI)', defaultValue='', optional=True))
+        self.addParameter(QgsProcessingParameterString(
+            self.VARIABLES_B, 'Variables in B, in the same order (empty: found by name)', defaultValue='',
+            optional=True))
         self.add_vertical_parameters()
         self.addParameter(QgsProcessingParameterDateTime(
             self.START, 'From (local standard time; empty: first time step)',
@@ -245,8 +270,8 @@ class AreaStatisticsAlgorithm(_AreaAlgorithm):
         variable_text = self.parameterAsString(parameters, self.VARIABLES, context)
         folder, prefix, delimiter = self.output_location(parameters, context)
 
-        path_a = self.parameterAsString(parameters, self.RESULTS, context)
-        path_b = self.parameterAsString(parameters, self.RESULTS_B, context)
+        path_a = self.results_path(parameters, context, self.RESULTS, self.RESULTS_FILE)
+        path_b = self.results_path(parameters, context, self.RESULTS_B, self.RESULTS_B_FILE, required=False)
         source_a, first_a = self.open_results(path_a, self.parameterAsString(parameters, self.SOURCE, context),
                                               feedback)
         sources = [source_a]
@@ -272,12 +297,14 @@ class AreaStatisticsAlgorithm(_AreaAlgorithm):
                 sources.append(source_b)
                 grid_b, static_b = first_b.grid, first_b.static_fields()
                 masks_b, _, _ = self.masks(parameters, context, feedback, grid_b, static_b, mode, z_min, z_max)
-                variables_b = self._variables(first_b, variable_text, mode, feedback)
+                variables_b = self._paired_variables(
+                    variables_a, first_b, self.parameterAsString(parameters, self.VARIABLES_B, context), mode,
+                    feedback)
                 rows += core_stats.time_series(
                     source_b, masks_b, variables_b, mode, level, 'B', start, end, thresholds,
                     progress=lambda p: feedback.setProgress(40 + p * 0.3), cancelled=feedback.isCanceled)
-                if grid_b.matches(grid_a):
-                    # B at A's cells: cells valid in both runs are paired
+                if grid_b.matches(grid_a) and area_analysis.same_vertical(static_a, static_b):
+                    # B at A's cells, which are the same places: cells valid in both runs are paired
                     values_b = {}
                     core_stats.time_series(
                         source_b, masks_a, variables_b, mode, level, 'B', start, end,
@@ -286,8 +313,10 @@ class AreaStatisticsAlgorithm(_AreaAlgorithm):
                     rows += core_stats.difference_series(values_a, values_b, masks_a, variables_a, mode, level,
                                                          thresholds)
                 else:
-                    feedback.pushWarning('Results A and B are on different grids: A - B is the difference of '
-                                         'the area means only.')
+                    why = ('different grids' if not grid_b.matches(grid_a)
+                           else 'different vertical levels or terrain')
+                    feedback.pushWarning(f'Results A and B have {why}: A - B is the difference of the area '
+                                         f'means only.')
                     rows += core_stats.mean_differences([r for r in rows if r['scenario'] == 'A'],
                                                         [r for r in rows if r['scenario'] == 'B'])
             if feedback.isCanceled():
@@ -312,4 +341,14 @@ class AreaStatisticsAlgorithm(_AreaAlgorithm):
         if not variables:
             raise QgsProcessingException('None of the variables can be evaluated. ' + ' '.join(problems))
         feedback.pushInfo('Variables: ' + ', '.join(f'{v.long_name} [{v.key}]' for v in variables))
+        return variables
+
+    def _paired_variables(self, variables_a, result_file_b, text_b, mode, feedback):
+        variables, problems = area_analysis.pair_variables(variables_a, result_file_b, text_b, mode)
+        for problem in problems:
+            feedback.pushWarning(problem)
+        if not variables:
+            raise QgsProcessingException('None of the variables can be compared with results B. '
+                                         + ' '.join(problems))
+        feedback.pushInfo('Variables in B: ' + ', '.join(f'{v.long_name} [{v.key}] as {v.name}' for v in variables))
         return variables
