@@ -1733,7 +1733,6 @@ class Geo2ENVImet:
         self.dlg.rb_forceRadC_yes.setChecked(True)
         self.dlg.rb_forceHum_yes.setChecked(True)
         self.dlg.rb_forcePrec_yes.setChecked(True)
-        self.dlg.rb_forceBgConc_no.setChecked(True)
         self.dlg.sb_constWS_FUFo.setValue(2.00)
         self.dlg.sb_constWD_FuFo.setValue(135.00)
         self.dlg.sb_rlength_FuFo.setValue(0.10)
