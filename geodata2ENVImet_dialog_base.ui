@@ -663,6 +663,96 @@ p, li { white-space: pre-wrap; }
                       </item>
                      </layout>
                     </widget>
+                    <widget class="QWidget" name="tab_surrounding">
+                     <attribute name="title">
+                      <string>Surrounding Area</string>
+                     </attribute>
+                     <layout class="QGridLayout" name="gridLayout_surrounding">
+                      <item row="0" column="0" colspan="2">
+                       <widget class="QLabel" name="lb_surroundingInfo">
+                        <property name="text">
+                         <string>ENVI-met 6 only; older versions ignore this. Describes the land outside each border of the model area as one of 27 urban or land-cover types. It sets the roughness of the inflow wind profile and, for the radiation, the skyline beyond the border.</string>
+                        </property>
+                        <property name="wordWrap">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="0" colspan="2">
+                       <widget class="QCheckBox" name="chk_surroundingArea">
+                        <property name="text">
+                         <string>Use the surrounding area</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="0">
+                       <widget class="QLabel" name="lb_borderLeft">
+                        <property name="text">
+                         <string>Left border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="1">
+                       <widget class="QComboBox" name="cb_borderLeft"/>
+                      </item>
+                      <item row="3" column="0">
+                       <widget class="QLabel" name="lb_borderRight">
+                        <property name="text">
+                         <string>Right border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="1">
+                       <widget class="QComboBox" name="cb_borderRight"/>
+                      </item>
+                      <item row="4" column="0">
+                       <widget class="QLabel" name="lb_borderFront">
+                        <property name="text">
+                         <string>Front border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="1">
+                       <widget class="QComboBox" name="cb_borderFront"/>
+                      </item>
+                      <item row="5" column="0">
+                       <widget class="QLabel" name="lb_borderRear">
+                        <property name="text">
+                         <string>Rear border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="1">
+                       <widget class="QComboBox" name="cb_borderRear"/>
+                      </item>
+                      <item row="6" column="0" colspan="2">
+                       <widget class="QLabel" name="lb_borderDirections">
+                        <property name="text">
+                         <string>Select a sub area to see which direction each border faces.</string>
+                        </property>
+                        <property name="wordWrap">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="7" column="0">
+                       <spacer name="verticalSpacer_surrounding">
+                        <property name="orientation">
+                         <enum>Qt::Vertical</enum>
+                        </property>
+                        <property name="sizeHint" stdset="0">
+                         <size>
+                          <width>20</width>
+                          <height>40</height>
+                         </size>
+                        </property>
+                       </spacer>
+                      </item>
+                     </layout>
+                    </widget>
                    </widget>
                   </item>
                   <item row="1" column="0">
@@ -1070,6 +1160,226 @@ p, li { white-space: pre-wrap; }
                          <bool>true</bool>
                         </property>
                        </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                    <widget class="QWidget" name="indoorBuilding">
+                     <attribute name="title">
+                      <string>Indoor Climate</string>
+                     </attribute>
+                     <layout class="QGridLayout" name="gridLayout_bIndoor">
+                      <item row="0" column="0" colspan="4">
+                       <widget class="QLabel" name="lb_bIndoorInfo">
+                        <property name="text">
+                         <string>ENVI-met 6 only; older versions ignore these settings. A building without a value uses the indoor climate settings of the simulation (Create ENVI-met simulation &gt; Indoor Climate). Attribute fields may hold the numbers shown in the boxes on the right (-1: not stated) or words such as residential, office, hall, heated, mixed or AC.</string>
+                        </property>
+                        <property name="wordWrap">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="0">
+                       <widget class="QLabel" name="lb_bUse">
+                        <property name="text">
+                         <string>Select field for building use [-1, 1-4 or text]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bUse">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="2">
+                       <widget class="QCheckBox" name="chk_bUse">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="3">
+                       <widget class="QComboBox" name="cmb_bUse"/>
+                      </item>
+                      <item row="2" column="0">
+                       <widget class="QLabel" name="lb_bIndoorMode">
+                        <property name="text">
+                         <string>Select field for climate control [-1, 1-4 or text]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bIndoorMode">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="2">
+                       <widget class="QCheckBox" name="chk_bIndoorMode">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="3">
+                       <widget class="QComboBox" name="cmb_bIndoorMode"/>
+                      </item>
+                      <item row="3" column="0">
+                       <widget class="QLabel" name="lb_bIndoorLower">
+                        <property name="text">
+                         <string>Select field for lower indoor threshold [°C]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bIndoorLower">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="2">
+                       <widget class="QCheckBox" name="chk_bIndoorLower">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="3">
+                       <widget class="QLineEdit" name="le_bIndoorLower">
+                        <property name="minimumSize">
+                         <size>
+                          <width>80</width>
+                          <height>20</height>
+                         </size>
+                        </property>
+                        <property name="placeholderText">
+                         <string>simulation setting</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="0">
+                       <widget class="QLabel" name="lb_bIndoorUpper">
+                        <property name="text">
+                         <string>Select field for upper indoor threshold [°C]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bIndoorUpper">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="2">
+                       <widget class="QCheckBox" name="chk_bIndoorUpper">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="3">
+                       <widget class="QLineEdit" name="le_bIndoorUpper">
+                        <property name="minimumSize">
+                         <size>
+                          <width>80</width>
+                          <height>20</height>
+                         </size>
+                        </property>
+                        <property name="placeholderText">
+                         <string>simulation setting</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="0">
+                       <widget class="QLabel" name="lb_bInternalGain">
+                        <property name="text">
+                         <string>Select field for internal heat gain [W/m²] (use 'Other' only):</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bInternalGain">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="2">
+                       <widget class="QCheckBox" name="chk_bInternalGain">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="3">
+                       <widget class="QLineEdit" name="le_bInternalGain">
+                        <property name="minimumSize">
+                         <size>
+                          <width>80</width>
+                          <height>20</height>
+                         </size>
+                        </property>
+                        <property name="placeholderText">
+                         <string>8</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="6" column="0" colspan="4">
+                       <widget class="QCheckBox" name="chk_bSuppressACHeat">
+                        <property name="text">
+                         <string>Discard the heat of air conditioners instead of releasing it into the outdoor air (diagnostic only, not physical)</string>
+                        </property>
+                        <property name="checked">
+                         <bool>false</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="7" column="1">
+                       <spacer name="verticalSpacer_bIndoor">
+                        <property name="orientation">
+                         <enum>Qt::Vertical</enum>
+                        </property>
+                        <property name="sizeHint" stdset="0">
+                         <size>
+                          <width>20</width>
+                          <height>40</height>
+                         </size>
+                        </property>
+                       </spacer>
                       </item>
                      </layout>
                     </widget>
@@ -2497,7 +2807,7 @@ p, li { white-space: pre-wrap; }
                        <enum>Qt::RightToLeft</enum>
                       </property>
                       <property name="text">
-                       <string>Building Settings</string>
+                       <string>Indoor Climate Settings</string>
                       </property>
                      </widget>
                     </item>
@@ -2822,7 +3132,29 @@ p, li { white-space: pre-wrap; }
                <string>General Settings</string>
               </attribute>
               <layout class="QGridLayout" name="gridLayout_74">
-               <item row="2" column="0">
+               <item row="0" column="0">
+                <widget class="QGroupBox" name="gb_simType">
+                 <property name="title">
+                  <string>Simulation type:</string>
+                 </property>
+                 <layout class="QGridLayout" name="gridLayout_simType">
+                  <item row="0" column="0">
+                   <widget class="QComboBox" name="cb_simType"/>
+                  </item>
+                  <item row="1" column="0">
+                   <widget class="QLabel" name="lb_simTypeInfo">
+                    <property name="text">
+                     <string>A module answers one question with a faster, simplified ENVI-met 6 run. It is set up on the Module page; the meteorology and the advanced settings are not used.</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item row="3" column="0">
                 <widget class="QGroupBox" name="gb_modelArea">
                  <property name="title">
                   <string>Model area:</string>
@@ -2848,7 +3180,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="1" column="0">
+               <item row="2" column="0">
                 <widget class="QGroupBox" name="gb_simName">
                  <property name="title">
                   <string>Simulation name:</string>
@@ -2905,7 +3237,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="4" column="0">
+               <item row="5" column="0">
                 <widget class="QGroupBox" name="gb_cpu">
                  <property name="title">
                   <string>CPU Cores (Parallel Computing):</string>
@@ -2947,7 +3279,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="0" column="0">
+               <item row="1" column="0">
                 <widget class="QGroupBox" name="gb_simDateTime">
                  <property name="title">
                   <string>Simulation Date and Time:</string>
@@ -3053,7 +3385,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="3" column="0">
+               <item row="4" column="0">
                 <spacer name="horizontalSpacer_24">
                  <property name="orientation">
                   <enum>Qt::Horizontal</enum>
@@ -3066,8 +3398,345 @@ p, li { white-space: pre-wrap; }
                  </property>
                 </spacer>
                </item>
-               <item row="5" column="0">
+               <item row="6" column="0">
                 <spacer name="verticalSpacer_18">
+                 <property name="orientation">
+                  <enum>Qt::Vertical</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>40</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="tab_Module">
+              <attribute name="title">
+               <string>Module</string>
+              </attribute>
+              <layout class="QGridLayout" name="gridLayout_module">
+               <item row="0" column="0">
+                <widget class="QGroupBox" name="gb_moduleFox">
+                 <property name="title">
+                  <string>Meteorological data (FOX file):</string>
+                 </property>
+                 <layout class="QGridLayout" name="gridLayout_moduleFox">
+                  <item row="0" column="0">
+                   <widget class="QLineEdit" name="le_moduleFox"/>
+                  </item>
+                  <item row="0" column="1">
+                   <widget class="QPushButton" name="bt_moduleFox">
+                    <property name="text">
+                     <string>Select file</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="0" colspan="2">
+                   <widget class="QLabel" name="lb_moduleFoxInfo">
+                    <property name="text">
+                     <string>Saving the SIMX file copies the FOX file next to it, as ENVI-guide does.</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QStackedWidget" name="sw_module">
+                 <widget class="QWidget" name="page_moduleNone">
+                  <layout class="QGridLayout" name="gridLayout_moduleNone">
+                   <item row="0" column="0">
+                    <widget class="QLabel" name="lb_moduleNone">
+                     <property name="text">
+                      <string>The full holistic simulation uses the Meteorology page and the advanced settings. Choose a module on the General Settings page to set it up here.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <spacer name="verticalSpacer_moduleNone">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleSolar">
+                  <layout class="QGridLayout" name="gridLayout_moduleSolar">
+                   <item row="0" column="0" colspan="4">
+                    <widget class="QLabel" name="lb_solarInfo">
+                     <property name="text">
+                      <string>Sun and shade on the days below, one calculation per day.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QLabel" name="lb_solarDate">
+                     <property name="text">
+                      <string>Date:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="1">
+                    <widget class="QDateEdit" name="de_solarDate">
+                     <property name="displayFormat">
+                      <string>dd.MM.yyyy</string>
+                     </property>
+                     <property name="calendarPopup">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="2">
+                    <widget class="QPushButton" name="bt_addSolarDate">
+                     <property name="text">
+                      <string>Add date</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="3">
+                    <widget class="QPushButton" name="bt_addSolstices">
+                     <property name="text">
+                      <string>Add solstices and equinoxes</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="0" colspan="4">
+                    <widget class="QLabel" name="lb_solarDates">
+                     <property name="text">
+                      <string>Days to simulate:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="3" column="0" colspan="3">
+                    <widget class="QListWidget" name="lw_solarDates"/>
+                   </item>
+                   <item row="3" column="3" alignment="Qt::AlignTop">
+                    <widget class="QPushButton" name="bt_removeSolarDate">
+                     <property name="text">
+                      <string>Remove date</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleWindFlow">
+                  <layout class="QGridLayout" name="gridLayout_moduleWindFlow">
+                   <item row="0" column="0" colspan="2">
+                    <widget class="QLabel" name="lb_windFlowInfo">
+                     <property name="text">
+                      <string>The wind field for one inflow direction and speed.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QLabel" name="lb_moduleWindDir">
+                     <property name="text">
+                      <string>Inflow direction [°]:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="1">
+                    <widget class="QSpinBox" name="sb_moduleWindDir">
+                     <property name="maximum">
+                      <number>360</number>
+                     </property>
+                     <property name="value">
+                      <number>90</number>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="0">
+                    <widget class="QLabel" name="lb_moduleWindSpeed">
+                     <property name="text">
+                      <string>Reference wind speed in 10 m height [m/s]:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="1">
+                    <widget class="QDoubleSpinBox" name="sb_moduleWindSpeed">
+                     <property name="decimals">
+                      <number>2</number>
+                     </property>
+                     <property name="maximum">
+                      <double>20.000000000000000</double>
+                     </property>
+                     <property name="singleStep">
+                      <double>0.100000000000000</double>
+                     </property>
+                     <property name="value">
+                      <double>2.000000000000000</double>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="3" column="0">
+                    <spacer name="verticalSpacer_moduleWindFlow">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleWindComfort">
+                  <layout class="QGridLayout" name="gridLayout_moduleWindComfort">
+                   <item row="0" column="0">
+                    <widget class="QLabel" name="lb_windComfortInfo">
+                     <property name="text">
+                      <string>Wind comfort over a year from the wind of the FOX file above. The file must cover a whole year: 1 January 00:00 to 31 December 23:00, without 29 February.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <spacer name="verticalSpacer_moduleWindComfort">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleFastUtci">
+                  <layout class="QGridLayout" name="gridLayout_moduleFastUtci">
+                   <item row="0" column="0">
+                    <widget class="QLabel" name="lb_fastUtciInfo">
+                     <property name="text">
+                      <string>Hourly UTCI from the start date and time for the duration set on the General Settings page. The FOX file above must cover that period.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QCheckBox" name="chk_moduleAverageWind">
+                     <property name="text">
+                      <string>Use simplified, quicker wind conditions (the average wind of the FOX file)</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="0">
+                    <spacer name="verticalSpacer_moduleFastUtci">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleUtciStats">
+                  <layout class="QGridLayout" name="gridLayout_moduleUtciStats">
+                   <item row="0" column="0" colspan="4">
+                    <widget class="QLabel" name="lb_utciStatsInfo">
+                     <property name="text">
+                      <string>UTCI statistics over the months and hours below, from a FOX file covering a whole year. Start and end are included; the period may run over the end of the year or of the day (e.g. November to February, 22:00 to 04:00).</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QLabel" name="lb_statsStartMonth">
+                     <property name="text">
+                      <string>Start month:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="1">
+                    <widget class="QComboBox" name="cb_statsStartMonth"/>
+                   </item>
+                   <item row="1" column="2">
+                    <widget class="QLabel" name="lb_statsEndMonth">
+                     <property name="text">
+                      <string>End month:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="3">
+                    <widget class="QComboBox" name="cb_statsEndMonth"/>
+                   </item>
+                   <item row="2" column="0">
+                    <widget class="QLabel" name="lb_statsStartHour">
+                     <property name="text">
+                      <string>Start hour:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="1">
+                    <widget class="QComboBox" name="cb_statsStartHour"/>
+                   </item>
+                   <item row="2" column="2">
+                    <widget class="QLabel" name="lb_statsEndHour">
+                     <property name="text">
+                      <string>End hour:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="3">
+                    <widget class="QComboBox" name="cb_statsEndHour"/>
+                   </item>
+                   <item row="3" column="0">
+                    <spacer name="verticalSpacer_moduleUtciStats">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <spacer name="verticalSpacer_module">
                  <property name="orientation">
                   <enum>Qt::Vertical</enum>
                  </property>
@@ -3165,7 +3834,7 @@ p, li { white-space: pre-wrap; }
                          <double>20.000000000000000</double>
                         </property>
                         <property name="value">
-                         <double>1.500000000000000</double>
+                         <double>2.000000000000000</double>
                         </property>
                        </widget>
                       </item>
@@ -3219,7 +3888,7 @@ p, li { white-space: pre-wrap; }
                          <double>3600.000000000000000</double>
                         </property>
                         <property name="value">
-                         <double>270.000000000000000</double>
+                         <double>90.000000000000000</double>
                         </property>
                        </widget>
                       </item>
@@ -3525,26 +4194,6 @@ p, li { white-space: pre-wrap; }
                           </spacer>
                          </item>
                         </layout>
-                       </widget>
-                      </item>
-                      <item row="2" column="0">
-                       <widget class="QLabel" name="lb_hum2500">
-                        <property name="text">
-                         <string>Specific humidity in 2500 m (g/kg):</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="1" column="0">
-                       <widget class="QLabel" name="lb_hum2500Caption">
-                        <property name="sizePolicy">
-                         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
-                          <horstretch>0</horstretch>
-                          <verstretch>0</verstretch>
-                         </sizepolicy>
-                        </property>
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Humidity in 2500 m&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
                        </widget>
                       </item>
                       <item row="0" column="4">
@@ -4161,16 +4810,6 @@ p, li { white-space: pre-wrap; }
                         </layout>
                        </widget>
                       </item>
-                      <item row="2" column="1">
-                       <widget class="QDoubleSpinBox" name="sb_specHum">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="value">
-                         <double>8.000000000000000</double>
-                        </property>
-                       </widget>
-                      </item>
                      </layout>
                     </widget>
                    </item>
@@ -4218,26 +4857,6 @@ p, li { white-space: pre-wrap; }
                             </property>
                             <property name="value">
                              <double>50.000000000000000</double>
-                            </property>
-                           </widget>
-                          </item>
-                          <item row="2" column="0">
-                           <widget class="QLabel" name="label_65">
-                            <property name="text">
-                             <string>Specific humidity in 2500 m (g/kg):</string>
-                            </property>
-                           </widget>
-                          </item>
-                          <item row="2" column="1">
-                           <widget class="QDoubleSpinBox" name="sb_specHum_2">
-                            <property name="locale">
-                             <locale language="English" country="UnitedStates"/>
-                            </property>
-                            <property name="maximum">
-                             <double>100.000000000000000</double>
-                            </property>
-                            <property name="value">
-                             <double>8.000000000000000</double>
                             </property>
                            </widget>
                           </item>
@@ -4721,402 +5340,6 @@ p, li { white-space: pre-wrap; }
                    </item>
                   </layout>
                  </widget>
-                 <widget class="QWidget" name="page_open">
-                  <layout class="QGridLayout" name="gridLayout_18">
-                   <item row="0" column="0">
-                    <widget class="QGroupBox" name="gb_openBC">
-                     <property name="title">
-                      <string>Lateral Boundary Conditions</string>
-                     </property>
-                     <layout class="QGridLayout" name="gridLayout_23">
-                      <item row="0" column="0">
-                       <widget class="QLabel" name="label_66">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Air Temperature&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="19" column="0" colspan="2">
-                       <spacer name="horizontalSpacer_16">
-                        <property name="orientation">
-                         <enum>Qt::Horizontal</enum>
-                        </property>
-                        <property name="sizeHint" stdset="0">
-                         <size>
-                          <width>40</width>
-                          <height>20</height>
-                         </size>
-                        </property>
-                       </spacer>
-                      </item>
-                      <item row="7" column="0">
-                       <widget class="QLabel" name="label_73">
-                        <property name="text">
-                         <string>Cloud cover of low clouds [0-8]:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="3" column="0">
-                       <widget class="QLabel" name="label_69">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Relative humidity in 2 m [%]:&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="9" column="1">
-                       <widget class="QSpinBox" name="sb_otherMediumclouds">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="maximum">
-                         <number>8</number>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="5" column="0">
-                       <widget class="QLabel" name="label_71">
-                        <property name="text">
-                         <string>Specific humidity in 2500 m [g/kg]:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="1" column="2">
-                       <widget class="QLabel" name="label_85">
-                        <property name="text">
-                         <string>Constant windspeed at inflow border [m/s]:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="9" column="0">
-                       <widget class="QLabel" name="label_75">
-                        <property name="text">
-                         <string>Cloud cover of medium clouds [0-8]:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="4" column="0">
-                       <widget class="QLabel" name="label_70">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Humidity in 2500 m &lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="4" column="2">
-                       <widget class="QLabel" name="label_82">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Roughness Length&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="5" column="1">
-                       <widget class="QDoubleSpinBox" name="sb_otherHum2500">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="maximum">
-                         <double>100.000000000000000</double>
-                        </property>
-                        <property name="value">
-                         <double>8.000000000000000</double>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="7" column="1">
-                       <widget class="QSpinBox" name="sb_otherLowclouds">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="maximum">
-                         <number>8</number>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="17" column="0" colspan="2">
-                       <spacer name="horizontalSpacer_7">
-                        <property name="orientation">
-                         <enum>Qt::Horizontal</enum>
-                        </property>
-                        <property name="sizeHint" stdset="0">
-                         <size>
-                          <width>40</width>
-                          <height>20</height>
-                         </size>
-                        </property>
-                       </spacer>
-                      </item>
-                      <item row="2" column="2">
-                       <widget class="QLabel" name="label_80">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Wind direction&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="20" column="0" colspan="2">
-                       <spacer name="horizontalSpacer_8">
-                        <property name="orientation">
-                         <enum>Qt::Horizontal</enum>
-                        </property>
-                        <property name="sizeHint" stdset="0">
-                         <size>
-                          <width>40</width>
-                          <height>20</height>
-                         </size>
-                        </property>
-                       </spacer>
-                      </item>
-                      <item row="5" column="3">
-                       <widget class="QDoubleSpinBox" name="sb_otherRlength">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="decimals">
-                         <number>3</number>
-                        </property>
-                        <property name="maximum">
-                         <double>1.000000000000000</double>
-                        </property>
-                        <property name="singleStep">
-                         <double>0.001000000000000</double>
-                        </property>
-                        <property name="value">
-                         <double>0.010000000000000</double>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="1" column="3">
-                       <widget class="QDoubleSpinBox" name="sb_otherWS">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="maximum">
-                         <double>20.000000000000000</double>
-                        </property>
-                        <property name="value">
-                         <double>2.000000000000000</double>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="18" column="0" colspan="2">
-                       <widget class="QLabel" name="label_79">
-                        <property name="text">
-                         <string>Lateral boundary conditions for Turbulence:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="5" column="2">
-                       <widget class="QLabel" name="label_83">
-                        <property name="text">
-                         <string>Microscale roughness length of surface [m]:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="11" column="1">
-                       <widget class="QSpinBox" name="sb_otherHighclouds">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="maximum">
-                         <number>8</number>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="2" column="0">
-                       <widget class="QLabel" name="label_68">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Humidity in 2 m&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="3" column="3">
-                       <widget class="QDoubleSpinBox" name="sb_otherWdir">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="maximum">
-                         <double>360.000000000000000</double>
-                        </property>
-                        <property name="value">
-                         <double>135.000000000000000</double>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="1" column="0">
-                       <widget class="QLabel" name="label_67">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Initial temperature of atmosphere [°C]:&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="13" column="0" colspan="2">
-                       <spacer name="horizontalSpacer_14">
-                        <property name="orientation">
-                         <enum>Qt::Horizontal</enum>
-                        </property>
-                        <property name="sizeHint" stdset="0">
-                         <size>
-                          <width>40</width>
-                          <height>20</height>
-                         </size>
-                        </property>
-                       </spacer>
-                      </item>
-                      <item row="3" column="2">
-                       <widget class="QLabel" name="label_81">
-                        <property name="text">
-                         <string>Constant wind direction at inflow [°]:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="11" column="0">
-                       <widget class="QLabel" name="label_77">
-                        <property name="text">
-                         <string>Cloud cover of high clouds [0-8]:</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="0" column="2">
-                       <widget class="QLabel" name="label_84">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Windspeed&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="12" column="0" colspan="2">
-                       <spacer name="horizontalSpacer_15">
-                        <property name="orientation">
-                         <enum>Qt::Horizontal</enum>
-                        </property>
-                        <property name="sizeHint" stdset="0">
-                         <size>
-                          <width>40</width>
-                          <height>20</height>
-                         </size>
-                        </property>
-                       </spacer>
-                      </item>
-                      <item row="18" column="2">
-                       <widget class="QComboBox" name="cb_otherBCturb">
-                        <item>
-                         <property name="text">
-                          <string>Open</string>
-                         </property>
-                        </item>
-                        <item>
-                         <property name="text">
-                          <string>Cyclic</string>
-                         </property>
-                        </item>
-                       </widget>
-                      </item>
-                      <item row="16" column="2">
-                       <widget class="QComboBox" name="cb_otherBChumT">
-                        <item>
-                         <property name="text">
-                          <string>Open</string>
-                         </property>
-                        </item>
-                        <item>
-                         <property name="text">
-                          <string>Cyclic</string>
-                         </property>
-                        </item>
-                       </widget>
-                      </item>
-                      <item row="6" column="0">
-                       <widget class="QLabel" name="label_72">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Low clouds&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="16" column="0" colspan="2">
-                       <widget class="QLabel" name="label_78">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Lateral boundary conditions for temperature and humidity:&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="14" column="0" colspan="2">
-                       <spacer name="horizontalSpacer_13">
-                        <property name="orientation">
-                         <enum>Qt::Horizontal</enum>
-                        </property>
-                        <property name="sizeHint" stdset="0">
-                         <size>
-                          <width>40</width>
-                          <height>20</height>
-                         </size>
-                        </property>
-                       </spacer>
-                      </item>
-                      <item row="10" column="0">
-                       <widget class="QLabel" name="label_76">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;High clouds&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="1" column="1">
-                       <widget class="QDoubleSpinBox" name="sb_otherAirT">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="minimum">
-                         <double>-10.000000000000000</double>
-                        </property>
-                        <property name="maximum">
-                         <double>50.000000000000000</double>
-                        </property>
-                        <property name="value">
-                         <double>20.000000000000000</double>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="8" column="0">
-                       <widget class="QLabel" name="label_74">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Medium clouds&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="3" column="1">
-                       <widget class="QDoubleSpinBox" name="sb_otherHum">
-                        <property name="locale">
-                         <locale language="English" country="UnitedStates"/>
-                        </property>
-                        <property name="maximum">
-                         <double>100.000000000000000</double>
-                        </property>
-                        <property name="value">
-                         <double>50.000000000000000</double>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="21" column="0" colspan="3">
-                       <widget class="QLabel" name="label_86">
-                        <property name="text">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Defines how the lateral model borders are handled numerically. &amp;quot;Open&amp;quot; copies the values of the next&lt;/p&gt;&lt;p&gt;grid point close to the border back to the border for each time step, which may overestimate the&lt;/p&gt;&lt;p&gt;influence of the environment near the border. &amp;quot;Cyclic&amp;quot; describes the process of copying the values of&lt;/p&gt;&lt;p&gt;the downstream border to the upstream border.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="22" column="0">
-                       <spacer name="verticalSpacer_15">
-                        <property name="orientation">
-                         <enum>Qt::Vertical</enum>
-                        </property>
-                        <property name="sizeHint" stdset="0">
-                         <size>
-                          <width>20</width>
-                          <height>40</height>
-                         </size>
-                        </property>
-                       </spacer>
-                      </item>
-                     </layout>
-                    </widget>
-                   </item>
-                  </layout>
-                 </widget>
                 </widget>
                </item>
               </layout>
@@ -5146,55 +5369,26 @@ p, li { white-space: pre-wrap; }
                     </property>
                    </widget>
                   </item>
-                  <item row="3" column="2">
-                   <widget class="QDoubleSpinBox" name="sb_soilTlower">
-                    <property name="locale">
-                     <locale language="English" country="UnitedStates"/>
-                    </property>
-                    <property name="minimum">
-                     <double>-20.000000000000000</double>
-                    </property>
-                    <property name="maximum">
-                     <double>100.000000000000000</double>
-                    </property>
-                    <property name="value">
-                     <double>19.000000000000000</double>
-                    </property>
-                   </widget>
-                  </item>
                   <item row="2" column="1">
                    <widget class="QDoubleSpinBox" name="sb_soilHumMiddle">
                     <property name="locale">
                      <locale language="English" country="UnitedStates"/>
                     </property>
+                    <property name="minimum">
+                     <double>-100.000000000000000</double>
+                    </property>
                     <property name="maximum">
                      <double>100.000000000000000</double>
                     </property>
                     <property name="value">
-                     <double>70.000000000000000</double>
+                     <double>50.000000000000000</double>
                     </property>
                    </widget>
                   </item>
                   <item row="5" column="0" colspan="3">
                    <widget class="QLabel" name="label_91">
                     <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set the soil temperature and humidity in the different layers under ground. Soil humidity is given&lt;/p&gt;&lt;p&gt;in Usable Field Capacity (Usable Field Capacity = Field Capacity - Wilting Point). If you want to&lt;/p&gt;&lt;p&gt;e.g. simulate a day in a long lasting dry period, you should modify the values accordingly.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="4" column="2">
-                   <widget class="QDoubleSpinBox" name="sb_soilTbedrock">
-                    <property name="locale">
-                     <locale language="English" country="UnitedStates"/>
-                    </property>
-                    <property name="minimum">
-                     <double>-20.000000000000000</double>
-                    </property>
-                    <property name="maximum">
-                     <double>100.000000000000000</double>
-                    </property>
-                    <property name="value">
-                     <double>18.000000000000000</double>
+                     <string>Set the initial soil humidity of the different soil layers. ENVI-met 6 estimates the initial soil temperatures from the location, the date and the air temperature.</string>
                     </property>
                    </widget>
                   </item>
@@ -5214,39 +5408,7 @@ p, li { white-space: pre-wrap; }
                   <item row="0" column="1">
                    <widget class="QLabel" name="label_93">
                     <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Soil Humidity [%]&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="1" column="2">
-                   <widget class="QDoubleSpinBox" name="sb_soilTupper">
-                    <property name="locale">
-                     <locale language="English" country="UnitedStates"/>
-                    </property>
-                    <property name="minimum">
-                     <double>-20.000000000000000</double>
-                    </property>
-                    <property name="maximum">
-                     <double>100.000000000000000</double>
-                    </property>
-                    <property name="value">
-                     <double>20.000000000000000</double>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="2" column="2">
-                   <widget class="QDoubleSpinBox" name="sb_soilTmiddle">
-                    <property name="locale">
-                     <locale language="English" country="UnitedStates"/>
-                    </property>
-                    <property name="minimum">
-                     <double>-20.000000000000000</double>
-                    </property>
-                    <property name="maximum">
-                     <double>100.000000000000000</double>
-                    </property>
-                    <property name="value">
-                     <double>20.000000000000000</double>
+                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Soil Humidity [% of usable field capacity; negative: % of wilting point]&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
                     </property>
                    </widget>
                   </item>
@@ -5269,11 +5431,14 @@ p, li { white-space: pre-wrap; }
                     <property name="locale">
                      <locale language="English" country="UnitedStates"/>
                     </property>
+                    <property name="minimum">
+                     <double>-100.000000000000000</double>
+                    </property>
                     <property name="maximum">
                      <double>100.000000000000000</double>
                     </property>
                     <property name="value">
-                     <double>65.000000000000000</double>
+                     <double>45.000000000000000</double>
                     </property>
                    </widget>
                   </item>
@@ -5302,11 +5467,14 @@ p, li { white-space: pre-wrap; }
                     <property name="locale">
                      <locale language="English" country="UnitedStates"/>
                     </property>
+                    <property name="minimum">
+                     <double>-100.000000000000000</double>
+                    </property>
                     <property name="maximum">
                      <double>100.000000000000000</double>
                     </property>
                     <property name="value">
-                     <double>75.000000000000000</double>
+                     <double>60.000000000000000</double>
                     </property>
                    </widget>
                   </item>
@@ -5315,18 +5483,14 @@ p, li { white-space: pre-wrap; }
                     <property name="locale">
                      <locale language="English" country="UnitedStates"/>
                     </property>
+                    <property name="minimum">
+                     <double>-100.000000000000000</double>
+                    </property>
                     <property name="maximum">
                      <double>100.000000000000000</double>
                     </property>
                     <property name="value">
-                     <double>75.000000000000000</double>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="0" column="2">
-                   <widget class="QLabel" name="label_94">
-                    <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:600;&quot;&gt;Initial Temperature [°C]&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+                     <double>55.000000000000000</double>
                     </property>
                    </widget>
                   </item>
@@ -5350,70 +5514,166 @@ p, li { white-space: pre-wrap; }
              </widget>
              <widget class="QWidget" name="tab_Buildings_2">
               <attribute name="title">
-               <string>Building Settings</string>
+               <string>Indoor Climate</string>
               </attribute>
               <layout class="QGridLayout" name="gridLayout_88">
                <item row="0" column="0">
                 <widget class="QGroupBox" name="gb_bldIndoor">
                  <property name="title">
-                  <string>Building Settings</string>
+                  <string>Building Indoor Control (ENVI-met 6)</string>
                  </property>
                  <layout class="QGridLayout" name="gridLayout_25">
-                  <item row="10" column="0">
-                   <widget class="QLabel" name="label_172">
+                  <item row="0" column="0" colspan="2">
+                   <widget class="QLabel" name="lb_indoorInfo">
                     <property name="text">
-                     <string/>
+                     <string>How the buildings exchange heat with their indoor air. Single buildings can deviate from these settings: see Export GIS layers &gt; Buildings &gt; Indoor climate.</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
                     </property>
                    </widget>
-                  </item>
-                  <item row="0" column="0">
-                   <widget class="QLabel" name="label_173">
-                    <property name="sizePolicy">
-                     <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                      <horstretch>0</horstretch>
-                      <verstretch>0</verstretch>
-                     </sizepolicy>
-                    </property>
-                    <property name="text">
-                     <string>Initial building surface temperature [°C]:</string>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="8" column="0">
-                   <widget class="QLabel" name="label_109">
-                    <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set the initial temperature inside of your buildings. If you choose to keep the building temperature&lt;/p&gt;&lt;p&gt;constant, the building temperature will not be influenced by the outside microclimate. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="0" column="4">
-                   <spacer name="horizontalSpacer_11">
-                    <property name="orientation">
-                     <enum>Qt::Horizontal</enum>
-                    </property>
-                    <property name="sizeHint" stdset="0">
-                     <size>
-                      <width>40</width>
-                      <height>20</height>
-                     </size>
-                    </property>
-                   </spacer>
                   </item>
                   <item row="1" column="0">
-                   <widget class="QLabel" name="label_108">
-                    <property name="sizePolicy">
-                     <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                      <horstretch>0</horstretch>
-                      <verstretch>0</verstretch>
-                     </sizepolicy>
-                    </property>
+                   <widget class="QLabel" name="lb_naturalVentilation">
                     <property name="text">
-                     <string>Building indoor air temperature [°C]:</string>
+                     <string>Indoor climate model:</string>
                     </property>
                    </widget>
                   </item>
-                  <item row="9" column="0">
-                   <spacer name="verticalSpacer">
+                  <item row="1" column="1">
+                   <widget class="QComboBox" name="cb_naturalVentilation">
+                    <item>
+                     <property name="text">
+                      <string>Off - buildings free-float</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>On - vented heat discarded (diagnostic, not physical)</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>On - vented heat released into the air</string>
+                     </property>
+                    </item>
+                   </widget>
+                  </item>
+                  <item row="2" column="0">
+                   <widget class="QLabel" name="lb_indoorMode">
+                    <property name="text">
+                     <string>Building climate control:</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="2" column="1">
+                   <widget class="QComboBox" name="cb_indoorMode">
+                    <item>
+                     <property name="text">
+                      <string>Free-running - no heating, no cooling</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>Heated, windows can be opened</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>Mixed mode - windows first, cooling as backup</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>Fully conditioned - sealed, heated and cooled</string>
+                     </property>
+                    </item>
+                   </widget>
+                  </item>
+                  <item row="3" column="0">
+                   <widget class="QLabel" name="lb_indoorUse">
+                    <property name="text">
+                     <string>Building use [internal heat gain]:</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="3" column="1">
+                   <widget class="QComboBox" name="cb_indoorUse">
+                    <item>
+                     <property name="text">
+                      <string>Not stated - mixed use, 8 W/m2</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>Residential - 5 W/m2, occupied 17:00 to 08:00</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>Office - 15 W/m2, occupied 08:00 to 17:00</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>Other - each building uses its own internal gain</string>
+                     </property>
+                    </item>
+                    <item>
+                     <property name="text">
+                      <string>Hall / single storey - 4 W/m2, one floor whatever the height</string>
+                     </property>
+                    </item>
+                   </widget>
+                  </item>
+                  <item row="4" column="0">
+                   <widget class="QLabel" name="lb_indoorLower">
+                    <property name="text">
+                     <string>Lower indoor threshold [°C]:</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="4" column="1">
+                   <widget class="QDoubleSpinBox" name="sb_indoorLower">
+                    <property name="decimals">
+                     <number>1</number>
+                    </property>
+                    <property name="minimum">
+                     <double>-50.000000000000000</double>
+                    </property>
+                    <property name="maximum">
+                     <double>60.000000000000000</double>
+                    </property>
+                    <property name="value">
+                     <double>20.000000000000000</double>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="5" column="0">
+                   <widget class="QLabel" name="lb_indoorUpper">
+                    <property name="text">
+                     <string>Upper indoor threshold [°C]:</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="5" column="1">
+                   <widget class="QDoubleSpinBox" name="sb_indoorUpper">
+                    <property name="decimals">
+                     <number>1</number>
+                    </property>
+                    <property name="minimum">
+                     <double>-50.000000000000000</double>
+                    </property>
+                    <property name="maximum">
+                     <double>60.000000000000000</double>
+                    </property>
+                    <property name="value">
+                     <double>26.000000000000000</double>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="6" column="0">
+                   <spacer name="verticalSpacer_indoor">
                     <property name="orientation">
                      <enum>Qt::Vertical</enum>
                     </property>
@@ -5424,121 +5684,6 @@ p, li { white-space: pre-wrap; }
                      </size>
                     </property>
                    </spacer>
-                  </item>
-                  <item row="0" column="3">
-                   <spacer name="horizontalSpacer_28">
-                    <property name="orientation">
-                     <enum>Qt::Horizontal</enum>
-                    </property>
-                    <property name="sizeType">
-                     <enum>QSizePolicy::Expanding</enum>
-                    </property>
-                    <property name="sizeHint" stdset="0">
-                     <size>
-                      <width>40</width>
-                      <height>20</height>
-                     </size>
-                    </property>
-                   </spacer>
-                  </item>
-                  <item row="1" column="3">
-                   <spacer name="horizontalSpacer_29">
-                    <property name="orientation">
-                     <enum>Qt::Horizontal</enum>
-                    </property>
-                    <property name="sizeHint" stdset="0">
-                     <size>
-                      <width>40</width>
-                      <height>20</height>
-                     </size>
-                    </property>
-                   </spacer>
-                  </item>
-                  <item row="1" column="4">
-                   <spacer name="horizontalSpacer_30">
-                    <property name="orientation">
-                     <enum>Qt::Horizontal</enum>
-                    </property>
-                    <property name="sizeHint" stdset="0">
-                     <size>
-                      <width>40</width>
-                      <height>20</height>
-                     </size>
-                    </property>
-                   </spacer>
-                  </item>
-                  <item row="0" column="1" colspan="2">
-                   <widget class="QDoubleSpinBox" name="sb_bldSurfTmp">
-                    <property name="sizePolicy">
-                     <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                      <horstretch>0</horstretch>
-                      <verstretch>0</verstretch>
-                     </sizepolicy>
-                    </property>
-                    <property name="minimum">
-                     <double>-200.000000000000000</double>
-                    </property>
-                    <property name="maximum">
-                     <double>200.000000000000000</double>
-                    </property>
-                    <property name="value">
-                     <double>20.000000000000000</double>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="1" column="1" colspan="2">
-                   <widget class="QDoubleSpinBox" name="sb_bldTmp">
-                    <property name="sizePolicy">
-                     <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
-                      <horstretch>0</horstretch>
-                      <verstretch>0</verstretch>
-                     </sizepolicy>
-                    </property>
-                    <property name="locale">
-                     <locale language="English" country="UnitedStates"/>
-                    </property>
-                    <property name="minimum">
-                     <double>-200.000000000000000</double>
-                    </property>
-                    <property name="maximum">
-                     <double>200.000000000000000</double>
-                    </property>
-                    <property name="value">
-                     <double>20.000000000000000</double>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="7" column="0">
-                   <widget class="QGroupBox" name="gb_bldIndoorConst">
-                    <property name="sizePolicy">
-                     <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                      <horstretch>0</horstretch>
-                      <verstretch>0</verstretch>
-                     </sizepolicy>
-                    </property>
-                    <property name="title">
-                     <string>Keep the building indoor temperature constant?</string>
-                    </property>
-                    <layout class="QGridLayout" name="gridLayout_89">
-                     <item row="0" column="0">
-                      <widget class="QRadioButton" name="rb_indoorYes">
-                       <property name="text">
-                        <string>Yes</string>
-                       </property>
-                      </widget>
-                     </item>
-                     <item row="0" column="1">
-                      <widget class="QRadioButton" name="rb_indoorNo">
-                       <property name="text">
-                        <string>No</string>
-                       </property>
-                       <property name="checked">
-                        <bool>true</bool>
-                       </property>
-                      </widget>
-                     </item>
-                    </layout>
-                   </widget>
                   </item>
                  </layout>
                 </widget>
@@ -6042,61 +6187,6 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="1" column="0">
-                <widget class="QGroupBox" name="gb_netCDFoutput">
-                 <property name="title">
-                  <string>NetCDF Output Files</string>
-                 </property>
-                 <layout class="QGridLayout" name="gridLayout_35">
-                  <item row="0" column="0">
-                   <layout class="QVBoxLayout" name="verticalLayout_13">
-                    <item>
-                     <widget class="QGroupBox" name="gb_writeNetCDF">
-                      <property name="title">
-                       <string>Write supplementary NetCDF output</string>
-                      </property>
-                      <layout class="QGridLayout" name="gridLayout_102">
-                       <item row="0" column="0">
-                        <widget class="QRadioButton" name="rb_writeNetCDFyes">
-                         <property name="sizePolicy">
-                          <sizepolicy hsizetype="Minimum" vsizetype="Preferred">
-                           <horstretch>0</horstretch>
-                           <verstretch>0</verstretch>
-                          </sizepolicy>
-                         </property>
-                         <property name="text">
-                          <string>Yes</string>
-                         </property>
-                        </widget>
-                       </item>
-                       <item row="0" column="1">
-                        <widget class="QRadioButton" name="rb_writeNetCDFNo">
-                         <property name="text">
-                          <string>No</string>
-                         </property>
-                         <property name="checked">
-                          <bool>true</bool>
-                         </property>
-                        </widget>
-                       </item>
-                      </layout>
-                     </widget>
-                    </item>
-                    <item>
-                     <widget class="QLabel" name="label_149">
-                      <property name="text">
-                       <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Check if NetCDF files shall be written additional to the ENVI-met default outputs. All ENVI-met output variables (out of the folders atmosphere, buildings, &lt;/p&gt;&lt;p&gt;radiation, etc.) will be stored in one file (unless the small file option is selected at the bottom of this NetCDF settings section). &lt;/p&gt;&lt;p&gt;NetCDF is a universal file format for multidimensional datasets, commonly used for climate models. Multiple libraries and software packages allow a &lt;/p&gt;&lt;p&gt;broad range of independent analysis possibilities.&lt;/p&gt;&lt;p&gt;Please install the netCDF-C library &amp;quot;netCDF-4 64-bit (Windows)&amp;quot; to enable NetCDF file writing (download can be found on the official netCDF Website:&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://downloads.unidata.ucar.edu/netcdf/&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0000ff;&quot;&gt;https://downloads.unidata.ucar.edu/netcdf/&lt;/span&gt;&lt;/a&gt;)&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item>
-                     <layout class="QHBoxLayout" name="horizontalLayout_13"/>
-                    </item>
-                   </layout>
-                  </item>
-                 </layout>
-                </widget>
-               </item>
                <item row="2" column="0">
                 <spacer name="verticalSpacer_11">
                  <property name="orientation">
@@ -6117,250 +6207,6 @@ p, li { white-space: pre-wrap; }
                <string>Expert Settings</string>
               </attribute>
               <layout class="QGridLayout" name="gridLayout_103">
-               <item row="0" column="1">
-                <widget class="QGroupBox" name="gb_facades">
-                 <property name="title">
-                  <string>Facades</string>
-                 </property>
-                 <layout class="QGridLayout" name="gridLayout_37">
-                  <item row="1" column="0">
-                   <widget class="QLabel" name="label_152">
-                    <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Set how the wind resistance at facades is calculated. &lt;br/&gt;DIN 6946 includes a higher z0 value and is the default.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                    </property>
-                    <property name="alignment">
-                     <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="0" column="0">
-                   <widget class="QGroupBox" name="gb_facades2">
-                    <property name="title">
-                     <string>Method</string>
-                    </property>
-                    <layout class="QGridLayout" name="gridLayout_107">
-                     <item row="0" column="0">
-                      <widget class="QRadioButton" name="rb_MO">
-                       <property name="text">
-                        <string>MO (default prior to v4.4)</string>
-                       </property>
-                      </widget>
-                     </item>
-                     <item row="1" column="0">
-                      <widget class="QRadioButton" name="rb_DIN6946">
-                       <property name="text">
-                        <string>DIN 6946 (new default)</string>
-                       </property>
-                       <property name="checked">
-                        <bool>true</bool>
-                       </property>
-                      </widget>
-                     </item>
-                    </layout>
-                   </widget>
-                  </item>
-                 </layout>
-                </widget>
-               </item>
-               <item row="0" column="0">
-                <widget class="QGroupBox" name="gb_SOR">
-                 <property name="title">
-                  <string>SOR mode</string>
-                 </property>
-                 <layout class="QGridLayout" name="gridLayout_36">
-                  <item row="0" column="0">
-                   <widget class="QGroupBox" name="gb_SOR2">
-                    <property name="title">
-                     <string>SOR</string>
-                    </property>
-                    <layout class="QGridLayout" name="gridLayout_106">
-                     <item row="0" column="0">
-                      <widget class="QRadioButton" name="rb_oldSOR">
-                       <property name="text">
-                        <string>Use old pressure field</string>
-                       </property>
-                      </widget>
-                     </item>
-                     <item row="1" column="0">
-                      <widget class="QRadioButton" name="rb_newSOR">
-                       <property name="text">
-                        <string>Use new pressure field</string>
-                       </property>
-                       <property name="checked">
-                        <bool>true</bool>
-                       </property>
-                      </widget>
-                     </item>
-                    </layout>
-                   </widget>
-                  </item>
-                  <item row="1" column="0">
-                   <widget class="QLabel" name="label_151">
-                    <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;The new pressure field is calculatedvia the red-black-tree algorithm,&lt;br/&gt;which allows a parallel computation of the pressure field.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                    </property>
-                   </widget>
-                  </item>
-                 </layout>
-                </widget>
-               </item>
-               <item row="1" column="1">
-                <widget class="QGroupBox" name="gb_AverageInflow">
-                 <property name="title">
-                  <string>Averaged Inflow</string>
-                 </property>
-                 <layout class="QGridLayout" name="gridLayout_104">
-                  <item row="0" column="0">
-                   <widget class="QGroupBox" name="gb_avgInflow">
-                    <property name="title">
-                     <string>Use Average Inflow</string>
-                    </property>
-                    <layout class="QGridLayout" name="gridLayout_105">
-                     <item row="0" column="0">
-                      <widget class="QRadioButton" name="rb_avgInflowYes">
-                       <property name="text">
-                        <string>Yes</string>
-                       </property>
-                      </widget>
-                     </item>
-                     <item row="1" column="0">
-                      <widget class="QRadioButton" name="rb_avgInflowNo">
-                       <property name="text">
-                        <string>No</string>
-                       </property>
-                       <property name="checked">
-                        <bool>true</bool>
-                       </property>
-                      </widget>
-                     </item>
-                    </layout>
-                   </widget>
-                  </item>
-                  <item row="1" column="0">
-                   <widget class="QLabel" name="label_154">
-                    <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;If activated, the reference surface temperature / humidity will be calculated accounting only inflow cells.&lt;br/&gt;Otherwise, it will be calculated using the average values of each grid cell.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                    </property>
-                    <property name="alignment">
-                     <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-                    </property>
-                   </widget>
-                  </item>
-                 </layout>
-                </widget>
-               </item>
-               <item row="2" column="0" colspan="2">
-                <widget class="QGroupBox" name="gb_TKE">
-                 <property name="title">
-                  <string>Turbulence Model (TKE)</string>
-                 </property>
-                 <layout class="QGridLayout" name="gridLayout_38">
-                  <item row="0" column="0">
-                   <widget class="QLabel" name="label_155">
-                    <property name="text">
-                     <string>Choose TKE model:</string>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="3" column="0">
-                   <spacer name="horizontalSpacer_23">
-                    <property name="orientation">
-                     <enum>Qt::Horizontal</enum>
-                    </property>
-                    <property name="sizeHint" stdset="0">
-                     <size>
-                      <width>40</width>
-                      <height>20</height>
-                     </size>
-                    </property>
-                   </spacer>
-                  </item>
-                  <item row="4" column="0" colspan="2">
-                   <widget class="QLabel" name="label_156">
-                    <property name="text">
-                     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;The different models mainly vary in the calculation of the mechanical production term Pm, the deformation of the wind field, and the rotation of the wind fields.&lt;br/&gt;&lt;/p&gt;&lt;p&gt;For further information, you can read the corresponding papers.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                    </property>
-                    <property name="alignment">
-                     <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-                    </property>
-                   </widget>
-                  </item>
-                  <item row="1" column="0">
-                   <widget class="QComboBox" name="cb_TKE">
-                    <property name="currentIndex">
-                     <number>3</number>
-                    </property>
-                    <item>
-                     <property name="text">
-                      <string>Mellor and Yamada 1982</string>
-                     </property>
-                    </item>
-                    <item>
-                     <property name="text">
-                      <string>Kato and Launder 1993</string>
-                     </property>
-                    </item>
-                    <item>
-                     <property name="text">
-                      <string>Lopez et al. 2005</string>
-                     </property>
-                    </item>
-                    <item>
-                     <property name="text">
-                      <string>Bruse/ENVI-met 2017</string>
-                     </property>
-                    </item>
-                   </widget>
-                  </item>
-                  <item row="5" column="0">
-                   <spacer name="verticalSpacer_12">
-                    <property name="orientation">
-                     <enum>Qt::Vertical</enum>
-                    </property>
-                    <property name="sizeHint" stdset="0">
-                     <size>
-                      <width>20</width>
-                      <height>40</height>
-                     </size>
-                    </property>
-                   </spacer>
-                  </item>
-                  <item row="2" column="0">
-                   <widget class="QGroupBox" name="gb_LimitTKE">
-                    <property name="title">
-                     <string>Limit TKE values</string>
-                    </property>
-                    <layout class="QGridLayout" name="gridLayout_116">
-                     <item row="0" column="0">
-                      <widget class="QRadioButton" name="rb_tkeLimitY">
-                       <property name="text">
-                        <string>Yes</string>
-                       </property>
-                       <property name="checked">
-                        <bool>true</bool>
-                       </property>
-                      </widget>
-                     </item>
-                     <item row="1" column="0">
-                      <widget class="QRadioButton" name="rb_tkeLimitN">
-                       <property name="text">
-                        <string>No</string>
-                       </property>
-                      </widget>
-                     </item>
-                     <item row="0" column="1" rowspan="2">
-                      <widget class="QLabel" name="label_175">
-                       <property name="text">
-                        <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Due to floating point inaccuracies, a negative E and eps might occur in complex model areas (in rare cases).&lt;br/&gt;Preventing these negative values might increase stability.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-                       </property>
-                      </widget>
-                     </item>
-                    </layout>
-                   </widget>
-                  </item>
-                 </layout>
-                </widget>
-               </item>
                <item row="1" column="0">
                 <widget class="QGroupBox" name="gb_simThreading">
                  <property name="title">
@@ -6539,6 +6385,13 @@ p, li { white-space: pre-wrap; }
                     </property>
                    </widget>
                   </item>
+                  <item>
+                   <widget class="QComboBox" name="cb_sourceA">
+                    <property name="toolTip">
+                     <string>Results of the folder to use: the NetCDF output, a report file or a folder of EDX files</string>
+                    </property>
+                   </widget>
+                  </item>
                  </layout>
                 </item>
                 <item>
@@ -6570,6 +6423,13 @@ p, li { white-space: pre-wrap; }
                    <widget class="QLineEdit" name="le_seriesB_path">
                     <property name="readOnly">
                      <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QComboBox" name="cb_sourceB">
+                    <property name="toolTip">
+                     <string>Results of the folder to use: the NetCDF output, a report file or a folder of EDX files</string>
                     </property>
                    </widget>
                   </item>
@@ -6665,6 +6525,16 @@ p, li { white-space: pre-wrap; }
                     <widget class="QProgressBar" name="pb_addToMap">
                      <property name="value">
                       <number>0</number>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="bt_areaStatistics">
+                     <property name="toolTip">
+                      <string>Statistics of the results over analysis areas (polygons), per time step</string>
+                     </property>
+                     <property name="text">
+                      <string>Area statistics...</string>
                      </property>
                     </widget>
                    </item>

@@ -1,9 +1,10 @@
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QThread, Qt, QDate, QTime
+from qgis.PyQt.QtCore import QLocale, QTranslator, QCoreApplication, QThread, QTimer, Qt, QDate, QTime
 from qgis.PyQt import QtCore
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QDoubleValidator, QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
-from qgis.core import (Qgis, QgsField, QgsMapLayerProxyModel, QgsVectorLayer,
-                       QgsFieldProxyModel, QgsRasterLayer)
+from qgis.core import (Qgis, QgsApplication, QgsDistanceArea, QgsField, QgsGeometry, QgsMapLayerProxyModel,
+                       QgsPointXY, QgsProject, QgsVectorLayer, QgsFieldProxyModel, QgsRasterLayer, QgsSettings,
+                       QgsMessageLog)
 
 # Initialize the bundled Qt resources (icons etc.); importing resources.py has
 # the side effect of calling qInitResources().
@@ -19,7 +20,19 @@ from qgis.PyQt import QtWidgets
 from qgis.PyQt.QtWidgets import QMessageBox, QListWidgetItem
 import os
 import subprocess
-from .Dataseries_handler import dataseries
+import traceback
+from .Dataseries_handler import dataseries, STATE_COMPARABLE, STATE_ONLY_A, STATE_ONLY_B
+from .result_layers import Cutline, LayerRequest, ResultLayersTask
+from .processing_provider.provider import EnvimetProvider
+from .core import envimet_install
+from .core.forcing import diurnal_profile
+from .core import simx as core_simx
+from .core import indoor as core_indoor
+from .core import modules as core_modules
+from .core import surrounding as core_surrounding
+from . import simx_ui
+import math
+import shutil
 
 
 class Geo2ENVImet:
@@ -37,17 +50,24 @@ class Geo2ENVImet:
         self.iface = iface
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
-        # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
-        locale_path = os.path.join(
-            self.plugin_dir,
-            'i18n',
-            'Geo2ENVImet_{}.qm'.format(locale))
+        # initialize locale; 'locale/userLocale' is unset in a fresh QGIS profile
+        # (fix from PR #2 by Till Frankenbach, restored)
+        try:
+            locale = QgsSettings().value('locale/userLocale')
+            if not locale:
+                locale = QLocale().name()
+            locale = locale[0:2]
+            locale_path = os.path.join(
+                self.plugin_dir,
+                'i18n',
+                'Geo2ENVImet_{}.qm'.format(locale))
 
-        if os.path.exists(locale_path):
-            self.translator = QTranslator()
-            self.translator.load(locale_path)
-            QCoreApplication.installTranslator(self.translator)
+            if os.path.exists(locale_path):
+                self.translator = QTranslator()
+                self.translator.load(locale_path)
+                QCoreApplication.installTranslator(self.translator)
+        except TypeError:
+            pass
 
         # Declare instance attributes
         self.actions = []
@@ -67,11 +87,13 @@ class Geo2ENVImet:
 
         # declare class field for UI
         self.dlg = None
+        # the last loaded SIMX file; settings the UI does not show are written back unchanged
+        self.loaded_simx = None
 
         # status states
         self.generalSettings_states = ('No model area (*.INX) selected!', 'Invalid simulation name!', '')
         self.meteoSettings_states = ('Simple Forcing selected', 'Full Forcing selected - FOX-file missing',
-                                     'Full Forcing selected', 'Open/Cyclic selected')
+                                     'Full Forcing selected')
 
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
@@ -88,8 +110,15 @@ class Geo2ENVImet:
         # will be set True in load_db()
         self.db_loaded = False
 
+        # Processing algorithms (area analysis)
+        self.provider = EnvimetProvider()
+        QgsApplication.processingRegistry().addProvider(self.provider)
+
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
+        if getattr(self, 'provider', None) is not None:
+            QgsApplication.processingRegistry().removeProvider(self.provider)
+            self.provider = None
         for action in self.actions:
             self.iface.removePluginMenu(
                 self.translate_phrase(u'&Geodata to ENVI-met'),
@@ -250,6 +279,9 @@ class Geo2ENVImet:
         # transfer subarea and gridding info
         self.worker.subAreaLayer = self.dlg.cb_subArea.currentLayer()
         self.worker.subAreaLayer_nonRot = self.dlg.cb_subArea.currentLayer()
+        self.worker.useSurroundingArea = self.dlg.chk_surroundingArea.isChecked()
+        self.worker.surroundingBorders = {border: getattr(self.dlg, f'cb_border{border}').currentIndex()
+                                          for border in core_surrounding.BORDERS}
         self.worker.dx = self.dlg.se_dx.value()
         self.worker.dy = self.dlg.se_dy.value()
         self.worker.dz = self.dlg.se_dz.value()
@@ -473,6 +505,24 @@ class Geo2ENVImet:
             self.worker.bBPS = QgsField("notAvail", FIELD_TYPE_STRING)
         else:
             self.worker.bBPS = self.dlg.cb_bBPS.currentField()
+        # indoor climate (ENVI-met 6): an attribute field or a static value per setting
+        self.worker.bIndoor = {}
+        for key, name in self.INDOOR_WIDGETS:
+            if getattr(self.dlg, f'chk_{name}').isChecked():
+                self.worker.bIndoor[key] = (None, self.indoor_static_value(key, name))
+            else:
+                self.worker.bIndoor[key] = (getattr(self.dlg, f'cb_{name}').currentField() or None, '')
+        self.worker.bSuppressACHeat = self.dlg.chk_bSuppressACHeat.isChecked()
+
+    # setting of core.indoor -> widget name suffix on the Buildings > Indoor Climate page
+    INDOOR_WIDGETS = (('use', 'bUse'), ('mode', 'bIndoorMode'), ('lower', 'bIndoorLower'),
+                      ('upper', 'bIndoorUpper'), ('gain', 'bInternalGain'))
+
+    def indoor_static_value(self, key, name):
+        if key in ('use', 'mode'):
+            # the user code of the entry, as it would be entered in an attribute field
+            return core_indoor.USER_CODES[max(0, getattr(self.dlg, f'cmb_{name}').currentIndex())]
+        return getattr(self.dlg, f'le_{name}').text().strip()
 
     def kill_worker(self):
         # method to kill/cancel the worker thread
@@ -640,6 +690,9 @@ class Geo2ENVImet:
 
         self.iface.messageBar().pushMessage("Success", "Output file written at " + self.worker.filename,
                                             level=Qgis.Success, duration=5)
+        for warning in self.worker.warnings:
+            QgsMessageLog.logMessage(warning, 'ENVI-met', level=Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushMessage("Warning", warning, level=Qgis.Warning)
 
     def updateCalcVertExt(self):
         self.dlg.l_highestStruct.setText(
@@ -709,26 +762,27 @@ class Geo2ENVImet:
         if filename[0] == "":
             self.dlg.lb_loadedSimx.setText("None")
         else:
+            self.load_simx_file(filename[0])
+
+    def load_simx_file(self, filepath):
+        # JSON (ENVI-met 5.9 and newer) or XML. Settings the tab does not show are kept for saving.
+        self.clear_settings_create_sim_tab()
+        try:
+            simulation, _ = core_simx.read(filepath)
+            notes = simx_ui.ui_from_model(self.dlg, simulation, os.path.dirname(filepath))
+            self.loaded_simx = simulation
+            self.after_simx_import(filepath)
+        except Exception as error:
+            QgsMessageLog.logMessage(f"Loading {filepath} failed:\n{traceback.format_exc()}",
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
             self.clear_settings_create_sim_tab()
-
-            self.thread = QThread()
-            self.worker = Worker()
-
-            # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
-            # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
-            self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-            # Connect signals and slots
-            self.thread.started.connect(lambda: self.worker.load_simx(ui=self.dlg, filepath=filename[0]))
-            self.worker.finished.connect(self.thread.quit)
-            self.worker.finished.connect(self.worker.deleteLater)
-            self.thread.finished.connect(self.thread.deleteLater)
-
-            # disable GUI
-            self.dlg.tw_Main.setEnabled(False)
-            # enable GUI, when done
-            self.thread.finished.connect(lambda: self.after_simx_import(filename[0]))
-
-            self.thread.start()  # finally start the thread
+            self.dlg.tw_Main.setEnabled(True)
+            self.iface.messageBar().pushMessage(
+                "Error", f"Could not load the settings of this SIMX file ({type(error).__name__}: {error}).",
+                level=Qgis.Warning)
+            return
+        for note in notes:
+            self.iface.messageBar().pushMessage("Info", note, level=Qgis.Info)
 
     def after_simx_import(self, filename):
         # check mandatory sections
@@ -741,15 +795,45 @@ class Geo2ENVImet:
         elif self.dlg.rb_fullForcing.isChecked():
             self.fufo_manual_settings_display()
         # update optional UI sections
-        if self.dlg.chk_radiationSim.isChecked():
-            self.radiation_ui_update()
         if self.dlg.chk_pollutantsSim.isChecked():
             self.pollutants_ui_update()
-        if self.dlg.chk_outputSim.isChecked():
-            self.output_ui_update()
+        self.update_simulation_type()
         # enable UI
         self.dlg.tw_Main.setEnabled(True)
         self.dlg.lb_loadedSimx.setText(filename)
+
+    # ------------------------------------------------------------------ simulation type and modules
+    def update_simulation_type(self):
+        simx_ui.update_module_page(self.dlg)
+        if simx_ui.is_module(self.dlg):
+            self.update_module_status()
+        else:
+            self.dlg.cb_meteo.setText('Meteorology')
+            self.select_forcing_mode()
+
+    def update_module_status(self):
+        """The Overview's status line for a module: ready, or what is missing."""
+        if not simx_ui.is_module(self.dlg):
+            return
+        problems = simx_ui.module_problems(self.dlg)
+        self.dlg.cb_meteo.setText('Module settings')
+        self.dlg.lb_meteorology.setText(problems[0] if problems else 'Module selected')
+        self.dlg.cb_meteo.setCheckState(Qt.CheckState.Unchecked if problems else Qt.CheckState.Checked)
+
+    def add_solar_dates(self, dates):
+        simx_ui.add_solar_dates(self.dlg, dates)
+        self.update_module_status()
+
+    def remove_solar_date(self):
+        for item in self.dlg.lw_solarDates.selectedItems():
+            self.dlg.lw_solarDates.takeItem(self.dlg.lw_solarDates.row(item))
+        self.update_module_status()
+
+    def select_module_fox(self):
+        filename, _filter = QFileDialog.getOpenFileName(
+            self.dlg, "Select the meteorological data (FOX file) for the module", "", '*.FOX')
+        if filename != "":
+            self.dlg.le_moduleFox.setText(filename)
 
     def select_output_folder(self):
         folder = QFileDialog.getExistingDirectory(
@@ -767,10 +851,11 @@ class Geo2ENVImet:
         dialog = QMessageBox()
         dialog.setText('Do you really want to clear all settings?')
         dialog.setWindowTitle('Confirmation required!')
-        dialog.setIcon(QMessageBox.Warning)
-        dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        dialog.button(QMessageBox.Yes).setText("Yes")
-        dialog.button(QMessageBox.No).setText("No")
+        # scoped enums: PyQt6 (QGIS 4) has no QMessageBox.Yes etc.
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        dialog.button(QMessageBox.StandardButton.Yes).setText("Yes")
+        dialog.button(QMessageBox.StandardButton.No).setText("No")
         dialog.buttonClicked.connect(self.dialog_btn_clicked)
         dialog.exec()
 
@@ -810,6 +895,8 @@ class Geo2ENVImet:
         self.dlg.cb_bRoof.setLayer(layerFields)
         self.dlg.cb_bName.setLayer(layerFields)
         self.dlg.cb_bBPS.setLayer(layerFields)
+        for _, name in self.INDOOR_WIDGETS:
+            getattr(self.dlg, f'cb_{name}').setLayer(layerFields)
         self.update_summary(self.dlg.cb_summary_buildings)
         self.update_model_height_info()
 
@@ -876,10 +963,8 @@ class Geo2ENVImet:
             if tmp_subAreaFeats is not None:
                 tmp_subAreaFeatCnt = sum(1 for _ in tmp_subAreaFeats)
                 if tmp_subAreaFeatCnt == 1:
+                    # updateCalcVertExt shows the heights when the worker has finished
                     self.startWorkerCalcVertExt()
-                    self.dlg.l_highestStruct.setText("Highest Structure (DEM + Building): " + str(
-                        self.worker.maxHeightTotal) + " m (Building = " + str(
-                        self.worker.maxHeightB) + " m, DEM = " + str(self.worker.maxHeightDEM) + " m)")
 
     def select_cb_Output_SubArea(self):
         # check if this layer only contains one polygon feature
@@ -931,10 +1016,52 @@ class Geo2ENVImet:
             self.iface.messageBar().pushMessage("Error", "Selected layer does not exist", level=Qgis.Warning)
         self.update_summary(self.dlg.cb_summary_gridding)
 
+    def update_surrounding_page(self):
+        """Border labels with the compass direction each border faces under the sub area's rotation."""
+        use = self.dlg.chk_surroundingArea.isChecked()
+        rotation = self.sub_area_rotation()
+        labels = core_surrounding.border_labels(rotation)
+        for border in core_surrounding.BORDERS:
+            label = getattr(self.dlg, f'lb_border{border}')
+            label.setText(labels[border])
+            label.setEnabled(use)
+            getattr(self.dlg, f'cb_border{border}').setEnabled(use)
+        if rotation is None:
+            text = 'Select a sub area to see which direction each border faces.'
+        else:
+            text = (f'The sub area is rotated by about {rotation:.0f}°; left, right, front and rear are the sides of '
+                    f'the model grid, the labels show where they face.')
+        self.dlg.lb_borderDirections.setText(text)
+
+    def sub_area_rotation(self):
+        """The model rotation the export will use (the bearing of the sub area's lower edge), or None."""
+        layer = self.dlg.cb_subArea.currentLayer()
+        if layer is None:
+            return None
+        try:
+            for feature in layer.getFeatures():
+                if not feature.hasGeometry():
+                    continue
+                # the export takes the edge from the first to the fourth vertex as the model's lower edge
+                vertices = list(feature.geometry().vertices())
+                if len(vertices) < 5:
+                    return None
+                distance = QgsDistanceArea()
+                distance.setSourceCrs(layer.crs(), QgsProject.instance().transformContext())
+                distance.setEllipsoid('WGS84')
+                bearing = math.degrees(distance.bearing(QgsPointXY(vertices[0].x(), vertices[0].y()),
+                                                        QgsPointXY(vertices[3].x(), vertices[3].y())))
+                return core_surrounding.rotation_from_bearing(bearing)
+        except Exception:       # an unusable layer or CRS: no directions, the export reports the problem
+            return None
+        return None
+
     def start_db_manager(self):
-        if self.enviProjects is not None:
-            filepath = self.enviProjects.installPath + "win64/DBManager.exe"
-            os.spawnv(os.P_NOWAIT, filepath, ["-someFlag", "someOtherFlag"])
+        if self.enviProjects is None:
+            self.reload_db()
+        filepath = self.enviProjects.installPath + "win64/DBManager.exe" if self.enviProjects is not None else ''
+        if filepath and os.path.isfile(filepath):
+            subprocess.Popen([filepath], cwd=os.path.dirname(filepath))
         else:
             self.iface.messageBar().pushMessage("Error",
                                                 "Could not find a local ENVI-met installation / workspace to load "
@@ -1011,10 +1138,11 @@ class Geo2ENVImet:
     def run(self):
         """Run method that performs all the real work"""
         self.setup_user_interface()
-        # show the dialog
+        # show the dialog without blocking QGIS, so layers can be edited (e.g. analysis areas
+        # digitised) while it is open
         self.dlg.show()
-        # Run the dialog event loop
-        self.dlg.exec()
+        self.dlg.raise_()
+        self.dlg.activateWindow()
 
     def setup_user_interface(self):
         # Create the dialog with elements (after translation) and keep reference
@@ -1041,6 +1169,28 @@ class Geo2ENVImet:
         self.dlg.bt_Select_Delta.clicked.connect(self.Select_all_Delta)
         self.dlg.bt_addToMap.clicked.connect(self.add_to_map)
         self.dlg.chk_onlyComparable.clicked.connect(self.loadVariablesInUI)
+        self.dlg.cb_sourceA.currentIndexChanged.connect(lambda: self.select_source('A'))
+        self.dlg.cb_sourceB.currentIndexChanged.connect(lambda: self.select_source('B'))
+        self.dlg.bt_areaStatistics.clicked.connect(self.open_area_statistics)
+
+    def area_statistics_parameters(self):
+        """Parameters for the area statistics algorithm from the series chosen in the tab."""
+        parameters = {}
+        for series, results, source in (('A', 'RESULTS', 'SOURCE'), ('B', 'RESULTS_B', 'SOURCE_B')):
+            path_edit, source_box = self.series_widgets(series)
+            if path_edit.text():
+                parameters[results] = path_edit.text()
+                parameters[source] = source_box.currentText()
+        choice = dataseries.SelectedVariable
+        if choice is not None and choice.key_a is not None:
+            parameters['VARIABLES'] = choice.key_a
+            if 'RESULTS_B' in parameters and choice.key_b is not None and choice.key_b != choice.key_a:
+                parameters['VARIABLES_B'] = choice.key_b       # the same quantity under another name in B
+        return parameters
+
+    def open_area_statistics(self):
+        import processing
+        processing.execAlgorithmDialog('envimet:areastatistics', self.area_statistics_parameters())
 
     def Select_all_A(self):
         if self.dlg.bt_Select_A.text() == 'Select All':
@@ -1082,27 +1232,52 @@ class Geo2ENVImet:
         dataseries.SelectedHeight = self.dlg.sb_height.value()
 
     def changeSelectedVariable(self):
-        cb_item_text = self.dlg.cb_dataLayers.itemText(self.dlg.cb_dataLayers.currentIndex())
-        dataseries.setSelectedVariableState(cb_item_text)
-        dataseries.setSelectedVariable(cb_item_text)
+        # the item data is the VariableChoice; its text may contain parentheses
+        dataseries.select_variable(self.dlg.cb_dataLayers.currentData())
 
     def select_seriesA_folder(self):
         folder = QFileDialog.getExistingDirectory(self.dlg, "Select input folder for Series A")
-        if folder == '':
-            self.dlg.le_seriesA_path.setText('')
-        else:
-            self.dlg.le_seriesA_path.setText(folder)
-        dataseries.fillList(folder, 'A')
-        self.setupUI()
+        self.load_series_folder(folder, 'A')
 
     def select_seriesB_folder(self):
         folder = QFileDialog.getExistingDirectory(self.dlg, "Select input folder for Series B")
-        if folder == '':
-            self.dlg.le_seriesB_path.setText('')
-        else:
-            self.dlg.le_seriesB_path.setText(folder)
-        dataseries.fillList(folder, 'B')
+        self.load_series_folder(folder, 'B')
+
+    def series_widgets(self, series):
+        if series == 'A':
+            return self.dlg.le_seriesA_path, self.dlg.cb_sourceA
+        return self.dlg.le_seriesB_path, self.dlg.cb_sourceB
+
+    def load_series_folder(self, folder, series):
+        """Find the result sources in ``folder`` and offer them in the series' source box."""
+        path_edit, source_box = self.series_widgets(series)
+        path_edit.setText(folder)
+        names = dataseries.set_folder(folder, series)
+        source_box.blockSignals(True)
+        source_box.clear()
+        source_box.addItems(names)
+        source_box.blockSignals(False)
+        if folder and not names:
+            self.iface.messageBar().pushMessage(
+                "Error", "No ENVI-met results (NetCDF or EDX/EDT files) found in " + folder, level=Qgis.Warning)
+        self.report_source_errors(series)
         self.setupUI()
+
+    def select_source(self, series):
+        _, source_box = self.series_widgets(series)
+        dataseries.select_source(source_box.currentText(), series)
+        self.report_source_errors(series)
+        self.setupUI()
+
+    def report_source_errors(self, series):
+        errors = dataseries.source_errors(series)
+        if errors:
+            QgsMessageLog.logMessage("Files that could not be read:\n" +
+                                     "\n".join(f"{path}: {message}" for path, message in errors),
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushMessage(
+                "Warning", f"{len(errors)} file(s) of series {series} could not be read; see the ENVI-met log.",
+                level=Qgis.Warning)
 
     def setupUI(self):
         dataseries.reset()
@@ -1114,8 +1289,8 @@ class Geo2ENVImet:
 
     def loadVariablesInUI(self):
         self.dlg.cb_dataLayers.clear()
-        for var in dataseries.getVariablesAsList(self.dlg.chk_onlyComparable.isChecked()):
-            self.dlg.cb_dataLayers.insertItem(999999, var)
+        for choice in dataseries.getVariablesAsList(self.dlg.chk_onlyComparable.isChecked()):
+            self.dlg.cb_dataLayers.addItem(choice.text(), choice)
 
     def fill_listWidgets(self):
         # clear listWidgets
@@ -1163,75 +1338,68 @@ class Geo2ENVImet:
                 item.setCheckState(QtCore.Qt.CheckState.Unchecked)
             self.dlg.lw_Delta.addItem(item)
 
+    def layer_requests(self):
+        """LayerRequests for the time steps checked in the A, B and delta lists."""
+        choice = dataseries.SelectedVariable
+        if choice is None:
+            return []
+        state = choice.state
+        height = self.dlg.sb_height.value()
+        requests = []
+        lists = (self.dlg.lw_SeriesA, self.dlg.lw_SeriesB, self.dlg.lw_Delta)
+        # all three lists have one row per entry of the merged list
+        for i, merged in enumerate(dataseries.mergedList):
+            checked = [lw.item(i).checkState() == Qt.CheckState.Checked for lw in lists]
+            merged.checkedA = checked[0] and not merged.placeholderA and state in (STATE_ONLY_A, STATE_COMPARABLE)
+            merged.checkedB = checked[1] and not merged.placeholderB and state in (STATE_ONLY_B, STATE_COMPARABLE)
+            merged.delta_checked = (checked[2] and not merged.placeholderA and not merged.placeholderB
+                                    and state == STATE_COMPARABLE)
+            a = None if merged.placeholderA else (merged.timestepA.path, merged.timestepA.index, choice.key_a)
+            b = None if merged.placeholderB else (merged.timestepB.path, merged.timestepB.index, choice.key_b)
+            if merged.checkedA:
+                t = merged.timestepA
+                requests.append(LayerRequest(choice.long_name, t.date, t.time, 'SeriesA', a=a, height=height))
+            if merged.checkedB:
+                t = merged.timestepB
+                requests.append(LayerRequest(choice.long_name, t.date, t.time, 'SeriesB', b=b, height=height))
+            if merged.delta_checked:
+                t = merged.timestepB
+                requests.append(LayerRequest(choice.long_name, t.date, t.time, 'Delta(A-B)', a=a, b=b,
+                                             height=height))
+        dataseries.CheckCount = len(requests)
+        return requests
+
+    def sub_area_cutline(self):
+        """The selected sub-area polygon(s) as a Cutline, or None."""
+        layer = dataseries.SelectedSubArea
+        if layer is None:
+            return None
+        geometries = [f.geometry() for f in layer.getFeatures() if f.hasGeometry()]
+        if not geometries:
+            return None
+        return Cutline(QgsGeometry.unaryUnion(geometries).asWkt(), layer.crs().toWkt())
+
     def add_to_map(self):
-        self.thread = QThread()
-        self.worker = Worker()
+        requests = self.layer_requests()
+        if not requests:
+            return
+        self.ui_upd_add_to_map(b=False)
+        self.results_task = ResultLayersTask(requests, cutline=self.sub_area_cutline(),
+                                             on_finished=self.after_add_to_map)
+        self.results_task.progressChanged.connect(self.report_progress_add_to_map)
+        QgsApplication.taskManager().addTask(self.results_task)
 
-        # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
-        # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
-        self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-
-        # update timesteps checked in List A
-        dataseries.CheckCount = 0
-        i = 0
-        items = [self.dlg.lw_SeriesA.item(x) for x in range(self.dlg.lw_SeriesA.count())]
-        for item in items:
-            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
-            # check if there is a itemText. Otherwise, the current index is a placeholder
-            if item.text() != ' ':
-                # check if the selected variable state is 'Only Series A' or 'Comparable'
-                if ((dataseries.SelectedVariableState == 'Only Series A') or (dataseries.SelectedVariableState == 'Comparable')) and item.checkState():
-                    dataseries.mergedList[i].checkedA = True
-                    dataseries.CheckCount += 1
-                else:
-                    dataseries.mergedList[i].checkedA = False
-            i += 1
-
-        # update timesteps checked in List B
-        i = 0
-        items = [self.dlg.lw_SeriesB.item(x) for x in range(self.dlg.lw_SeriesB.count())]
-        for item in items:
-            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
-            # check if there is a itemText. Otherwise, the current index is a placeholder
-            if item.text() != ' ':
-                # check if the selected variable state is 'Only Series B' or 'Comparable'
-                if ((dataseries.SelectedVariableState == 'Only Series B') or (dataseries.SelectedVariableState == 'Comparable')) and item.checkState():
-                    dataseries.mergedList[i].checkedB = True
-                    dataseries.CheckCount += 1
-                else:
-                    dataseries.mergedList[i].checkedB = False
-            i += 1
-
-        # update timesteps checked in Delta-List
-        i = 0
-        items = [self.dlg.lw_Delta.item(x) for x in range(self.dlg.lw_Delta.count())]
-        for item in items:
-            # since the mergedList is the data-structure which fills the listwidget, all items are at the same indices
-            # check if there is a timestep in both lists A and B, then we got a delta-checkbox
-            if (not dataseries.mergedList[i].placeholderA) and (not dataseries.mergedList[i].placeholderB):
-                # check if the selected variable state is 'Comparable'
-                if (dataseries.SelectedVariableState == 'Comparable') and item.checkState():
-                    dataseries.mergedList[i].delta_checked = True
-                    dataseries.CheckCount += 1
-                else:
-                    dataseries.mergedList[i].delta_checked = False
-            i += 1
-
-        if dataseries.CheckCount != 0:
-            self.thread.started.connect(lambda: self.worker.add_layers_to_map())
-            # disable GUI
-            self.ui_upd_add_to_map(b=False)
-            self.thread.finished.connect(lambda: self.ui_upd_add_to_map(b=True))
-
-            self.worker.finished.connect(self.thread.quit)
-            self.worker.finished.connect(self.worker.deleteLater)
-            self.thread.finished.connect(self.thread.deleteLater)
-            # enable GUI, when done
-            self.worker.progress.connect(self.report_progress_add_to_map)
-            self.thread.start()  # finally start the thread
+    def after_add_to_map(self, task):
+        self.ui_upd_add_to_map(b=True)
+        self.dlg.pb_addToMap.setValue(100)
+        if task.errors:
+            QgsMessageLog.logMessage("Layers that could not be made:\n" + "\n".join(task.errors),
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
+            self.iface.messageBar().pushMessage(
+                "Warning", f"{len(task.errors)} layer(s) could not be made; see the ENVI-met log.", level=Qgis.Warning)
 
     def report_progress_add_to_map(self, progress):
-        self.dlg.pb_addToMap.setValue(progress)
+        self.dlg.pb_addToMap.setValue(int(progress))
 
     def reset_progess_bar_add_to_map(self):
         self.dlg.pb_addToMap.setValue(0)
@@ -1251,15 +1419,26 @@ class Geo2ENVImet:
         self.dlg.cb_meteo.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.dlg.cb_meteo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
+        simx_ui.setup_module_widgets(self.dlg)
         self.clear_settings_create_sim_tab()
 
         # connect events
-        self.dlg.chk_soilSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Soil))
-        self.dlg.chk_radiationSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Radiation))
-        self.dlg.chk_buildingsSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Buildings_2))
-        self.dlg.chk_pollutantsSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Pollutants))
-        self.dlg.chk_outputSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Output))
-        self.dlg.chk_expertSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Expert))
+        # an advanced settings tab is usable while its section is included (and no module is chosen)
+        for check, _ in simx_ui.OPTIONAL_TABS:
+            getattr(self.dlg, check).stateChanged.connect(lambda *_: simx_ui.update_optional_tabs(self.dlg))
+
+        # simulation type and modules (ENVI-met 6)
+        self.dlg.cb_simType.currentIndexChanged.connect(lambda *_: self.update_simulation_type())
+        self.dlg.bt_addSolarDate.clicked.connect(
+            lambda: self.add_solar_dates([self.dlg.de_solarDate.date().toString('dd.MM.yyyy')]))
+        self.dlg.bt_addSolstices.clicked.connect(
+            lambda: self.add_solar_dates(core_modules.solstices_and_equinoxes(self.dlg.de_solarDate.date().year())))
+        self.dlg.bt_removeSolarDate.clicked.connect(self.remove_solar_date)
+        self.dlg.bt_moduleFox.clicked.connect(self.select_module_fox)
+        self.dlg.le_moduleFox.textChanged.connect(lambda *_: self.update_module_status())
+        for box in (self.dlg.cb_statsStartMonth, self.dlg.cb_statsEndMonth, self.dlg.cb_statsStartHour,
+                    self.dlg.cb_statsEndHour):
+            box.currentIndexChanged.connect(lambda *_: self.update_module_status())
 
         self.dlg.bt_fileExpl.clicked.connect(lambda: self.select_output_file('SIMX'))
         self.dlg.bt_inxForSim.clicked.connect(self.select_inx_input)
@@ -1274,6 +1453,11 @@ class Geo2ENVImet:
 
         self.dlg.rb_simpleForcing.clicked.connect(self.select_forcing_mode)
         self.dlg.rb_fullForcing.clicked.connect(self.select_forcing_mode)
+
+        self.dlg.cb_naturalVentilation.currentIndexChanged.connect(self.update_indoor_page)
+        self.dlg.cb_indoorMode.currentIndexChanged.connect(self.update_indoor_page)
+        self.dlg.sb_indoorLower.valueChanged.connect(self.update_indoor_page)
+        self.dlg.sb_indoorUpper.editingFinished.connect(self.update_indoor_page)
 
         self.dlg.calendar_startDateSim.selectionChanged.connect(self.update_date)
 
@@ -1296,9 +1480,6 @@ class Geo2ENVImet:
         self.dlg.hs_minHum.valueChanged.connect(self.sifo_slider_update)
 
         self.dlg.cb_userPolluType.currentIndexChanged.connect(self.pollutants_ui_update)
-
-        self.dlg.rb_writeNetCDFyes.clicked.connect(self.output_ui_update)
-        self.dlg.rb_writeNetCDFNo.clicked.connect(self.output_ui_update)
 
         # conncect buttons to run simulation
         self.dlg.bt_selectSIMX.clicked.connect(self.select_simx)
@@ -1323,121 +1504,64 @@ class Geo2ENVImet:
             self.iface.messageBar().pushMessage("Error", "No project-folder selected", level=Qgis.Warning)
             return
 
-        # find the workspace path and the installation path automatically
-        usersettings = os.getenv('APPDATA').replace('\\', '/') + '/ENVI-met/usersettings.setx'
-        if os.path.exists(usersettings):
-            userpathinfo = ''
-            workspace = ''
-
-            settings = open(usersettings, 'br')
-            for row in settings:
-                row = row.decode('ansi')
-                if '<absolute_path>' in row:
-                    workspace = row.split(">", 1)[1].split("<", 1)[0].replace(' ', '').replace('\\', '/')
-                if ('<userpathinfo>' in row) and ('</userpathinfo>' in row):
-                    userpathinfo = row.split(">", 1)[1].split("<", 1)[0].replace(' ', '').replace('\\', '/')
-            settings.close()
-
-            if not userpathinfo == '':
-                installPath = userpathinfo.replace("sys.userdata", "")
-            else:
-                self.iface.messageBar().pushMessage("Error", "No ENVI-met installation found!", level=Qgis.Warning)
-                return
-
-            if workspace == '':
-                self.iface.messageBar().pushMessage("Error", "No ENVI-met workspace found!", level=Qgis.Warning)
-                return
-        else:
+        # find the workspace and the installation from ENVI-met's user settings
+        settings = envimet_install.read_usersettings()
+        if (settings is None) or (settings.install_path == ''):
             self.iface.messageBar().pushMessage("Error", "No ENVI-met installation found!", level=Qgis.Warning)
             return
+        if settings.workspace == '':
+            self.iface.messageBar().pushMessage("Error", "No ENVI-met workspace found!", level=Qgis.Warning)
+            return
+        envicore_path = envimet_install.console_exe(settings.install_path)
+        if not os.path.isfile(envicore_path):
+            self.iface.messageBar().pushMessage("Error", f"ENVI-met console not found: {envicore_path}",
+                                                level=Qgis.Warning)
+            return
 
-        envicore_path = installPath.replace('\\', '/') + 'win64/envicore_console.exe'
-
-        # print(envicore_path)
         # get selected project folder and simx-file
-        projectFolder = self.dlg.lb_selected_projFolder.text().replace('\\', '/')
-        simx_file = self.dlg.lb_simxFile.text().replace('\\', '/')
+        projectFolder = self.dlg.lb_selected_projFolder.text().strip()
+        simx_file = self.dlg.lb_simxFile.text().strip()
 
-        # check if there is a project.infoX inside this folder
-        my_project_name = ''
-        if os.path.exists(projectFolder + '/project.infoX'):
-            info_file = open(projectFolder + '/project.infoX')  # , 'br')
-            '''
-            # old code -> with the new scenarios this does not work anymore
-            for row in info_file:
-                row = row.decode('ansi')
-                if '<name>' in row:
-                    my_project_name = row.split(">", 1)[1].split("<", 1)[0].strip()
-            '''
-            startRow = 0
-            endRow = 0
-            rowI = 0
-            textList = []
-            for row in info_file:
-                # row = row.decode('ansi')
-                if '<project_description>' in row:
-                    startRow = rowI
-                if '</project_description>' in row:
-                    endRow = rowI
-                rowI += 1
-                textList.append(row.strip())
-            # print(startRow)
-            # print(endRow)
-            # info_file.close()
-            # info_file = open(projectFolder + '/project.infoX')
-            # content = info_file.readlines()
-            for a in range(startRow, endRow):
-                # print(textList[a])
-                if '<name>' in textList[a]:
-                    my_project_name = textList[a].split(">", 1)[1].split("<", 1)[0].strip()
-
-            # print(my_project_name)
-            info_file.close()
-        if my_project_name != '':
-            if projectFolder in simx_file:
-                simx_file = simx_file.replace(projectFolder + '/', '')
-            else:
-                self.iface.messageBar().pushMessage("Error",
-                                                    "The simulation-file (*.SIMX) is not inside the selected ENVI-met project-folder",
-                                                    level=Qgis.Warning)
-                return
-
-            if workspace in projectFolder:
-                projectFolder = projectFolder.replace(workspace + '/', '')
-            else:
-                self.iface.messageBar().pushMessage("Error",
-                                                    "The selected project-folder is not inside your ENVI-met workspace",
-                                                    level=Qgis.Warning)
-                return
-            # print(f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # command = f'{envicore_path} {workspace} {my_project_name} {simx_file}'
-            # os.system("cmd /c D:/ENVImet560a/win64/envicore.exe")
-            # program = "D:\ENVImet560a\win64\Leonardo.exe"
-            # = subprocess.Popen(program, shell=True)
-            # print(pID)
-            # subprocess.run(['D:/ENVImet560a/win64/envicore.exe', ''])
-            # os.system("cmd /c {command}")
-            # subprocess.run(["start", "/wait", "cmd", "/K", command, "arg /?\^"], shell=True)
-            # os.system('start /wait cmd /c ' + f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # envicore_path = envicore_path.replace('envicore_console.exe', 'core.exe')
-            # print(envicore_path)
-            # print(f'SIMX-file: {simx_file}" ' f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # orig: replaced with secure subprocess call
-            if os.name == 'nt':  # Check if running on Windows
-                subprocess.Popen(
-                    [envicore_path, workspace, my_project_name, simx_file],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE
-                )
-            else:  # Fallback for non-Windows environments
-                subprocess.Popen([envicore_path, workspace, my_project_name, simx_file])
-            # print(f'SIMX-file: {simx_file}" ' f'{envicore_path} {workspace} {my_project_name} {simx_file}')
-            # command = f'{envicore_path} {workspace} {my_project_name} {simx_file}'
-            # os.system("start /wait cmd /c {command}")
-        else:
+        # the project is found by the name in its project.infoX, not by its folder name
+        my_project_name = envimet_install.read_project_name(projectFolder)
+        if my_project_name == '':
             self.iface.messageBar().pushMessage("Error",
                                                 "Could not find a project.infoX file inside folder. Are you sure the selected folder is a valid ENVI-met project-folder",
                                                 level=Qgis.Warning)
             return
+        if not envimet_install.is_inside(simx_file, projectFolder):
+            self.iface.messageBar().pushMessage("Error",
+                                                "The simulation-file (*.SIMX) is not inside the selected ENVI-met project-folder",
+                                                level=Qgis.Warning)
+            return
+        if not envimet_install.is_inside(projectFolder, settings.workspace):
+            self.iface.messageBar().pushMessage("Error",
+                                                "The selected project-folder is not inside your ENVI-met workspace",
+                                                level=Qgis.Warning)
+            return
+
+        # ENVI-met >= 5.9.5 takes -key=value arguments, older versions positional ones
+        version = envimet_install.read_installed_version(settings.install_path)
+        command = envimet_install.build_console_command(
+            install_path=settings.install_path, workspace=settings.workspace, project_name=my_project_name,
+            simx_file=envimet_install.relative_to(simx_file, projectFolder), version=version)
+        if version is None:
+            QgsMessageLog.logMessage("Could not read the ENVI-met version from sys.basedata/vctrl.edbx; "
+                                     "starting the simulation with -key=value arguments.",
+                                     'ENVI-met', level=Qgis.MessageLevel.Warning)
+        version_text = 'unknown' if version is None else '.'.join(str(v) for v in version)
+        QgsMessageLog.logMessage(f"Starting ENVI-met {version_text}: {subprocess.list2cmdline(command)}",
+                                 'ENVI-met', level=Qgis.MessageLevel.Info)
+        # ENVI-met opens a module's FOX file by the bare name in the SIMX, from the folder it runs in;
+        # ENVI-guide keeps that file next to the SIMX
+        run_folder = os.path.dirname(os.path.abspath(simx_file))
+        try:
+            if os.name == 'nt':  # Check if running on Windows
+                subprocess.Popen(command, cwd=run_folder, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:  # Fallback for non-Windows environments
+                subprocess.Popen(command, cwd=run_folder)
+        except OSError as error:
+            self.iface.messageBar().pushMessage("Error", f"Could not start ENVI-met: {error}", level=Qgis.Warning)
 
     def select_simx(self):
         filename = QFileDialog.getOpenFileName(
@@ -1452,43 +1576,59 @@ class Geo2ENVImet:
         if not self.dlg.cb_generalSettings.isChecked():
             self.iface.messageBar().pushMessage("Error", "General Settings are not defined", level=Qgis.Warning)
             return
-        if not self.dlg.cb_meteo.isChecked():
+        module = simx_ui.simulation_type(self.dlg) if simx_ui.is_module(self.dlg) else None
+        problems = simx_ui.module_problems(self.dlg) if module else []
+        if problems:
+            self.iface.messageBar().pushMessage("Error", problems[0], level=Qgis.Warning)
+            return
+        if not module and not self.dlg.cb_meteo.isChecked():
             self.iface.messageBar().pushMessage("Error", "Meteorology is not defined", level=Qgis.Warning)
             return
         if self.dlg.le_simxDest.text().isspace() or (self.dlg.le_simxDest.text() == ""):
             self.iface.messageBar().pushMessage("Error", "No output file location defined", level=Qgis.Warning)
             return
 
-        self.thread = QThread()
-        self.worker = Worker()
+        # JSON for ENVI-met 5.9 and newer (and when no installation is found), XML for older versions
+        version = self.installed_envimet_version()
+        if module and version is not None and tuple(version) < core_modules.MIN_VERSION:
+            self.iface.messageBar().pushMessage(
+                "Error", "The simulation modules need ENVI-met 6.0 or newer; the installed version is "
+                         + '.'.join(str(v) for v in version) + ".", level=Qgis.Warning)
+            return
+        json_format = core_simx.uses_json(version)
+        path = self.dlg.le_simxDest.text().strip()
+        try:
+            fox_name = None
+            if module in core_modules.FOX_MODULES:
+                # ENVI-met opens the FOX by its bare name: keep a copy next to the SIMX, as ENVI-guide does
+                fox_name = core_modules.fox_file_name(path, module)
+                source = self.dlg.le_moduleFox.text().strip()
+                target = os.path.join(os.path.dirname(os.path.abspath(path)), fox_name)
+                if os.path.normcase(os.path.abspath(source)) != os.path.normcase(target):
+                    shutil.copyfile(source, target)
+            simulation = simx_ui.model_from_ui(self.dlg, base=self.loaded_simx, json_format=json_format,
+                                               fox_name=fox_name)
+            if json_format:
+                core_simx.write_json(path, simulation)
+            else:
+                core_simx.write_xml(path, simulation, datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            self.iface.messageBar().pushMessage("Error", f"The SIMX file could not be written: {error}",
+                                                level=Qgis.Warning)
+            return
+        target = 'unknown ENVI-met version' if version is None else 'ENVI-met ' + '.'.join(str(v) for v in version)
+        self.dlg.lb_reportSave.setText(f"SIMX-file saved ({'JSON' if json_format else 'XML'} format, {target})")
 
-        # see https://realpython.com/python-pyqt-qthread/#using-qthread-to-prevent-freezing-guis
-        # and https://doc.qt.io/qtforpython/PySide6/QtCore/QThread.html
-        self.worker.moveToThread(self.thread)  # move Worker-Class to a thread
-        # Connect signals and slots:
-        self.thread.started.connect(lambda: self.worker.save_simx(ui=self.dlg))
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
+    @staticmethod
+    def installed_envimet_version():
+        """(major, minor, patch) of the ENVI-met installation in the user settings, or None."""
+        settings = envimet_install.read_usersettings()
+        if settings is None or not settings.install_path:
+            return None
+        return envimet_install.read_installed_version(settings.install_path)
 
-        # disable GUI
-        self.dlg.tw_Main.setEnabled(False)
-        # enable GUI, when done
-        self.thread.finished.connect(self.after_simx_export)
-
-        self.thread.start()  # finally start the thread
-
-    def after_simx_export(self):
-        self.dlg.tw_Main.setEnabled(True)
-        self.dlg.lb_reportSave.setText('SIMX-file saved!')
-
-    def output_ui_update(self):
-        if self.dlg.rb_writeNetCDFyes.isChecked():
-            self.dlg.gb_NetCDFnumFiles.setEnabled(True)
-            self.dlg.gb_NetCDFSize.setEnabled(True)
-        else:
-            self.dlg.gb_NetCDFnumFiles.setEnabled(False)
-            self.dlg.gb_NetCDFSize.setEnabled(False)
+    def update_indoor_page(self):
+        simx_ui.update_indoor_page(self.dlg)
 
     def pollutants_ui_update(self):
         if (self.dlg.cb_userPolluType.currentIndex() == 1) or (self.dlg.cb_userPolluType.currentIndex() == 9):
@@ -1556,12 +1696,7 @@ class Geo2ENVImet:
                 self.dlg.lb_selectedDateSim.setText(f"{d}.{m}.{y}")
 
     def select_forcing_mode(self):
-        if self.dlg.rb_simpleForcing.isChecked():
-            # show page for simple forcing
-            self.dlg.stackedWidget_3.setCurrentIndex(0)
-            self.dlg.lb_meteorology.setText(self.meteoSettings_states[0])
-            self.dlg.cb_meteo.setCheckState(Qt.CheckState.Checked)
-        elif self.dlg.rb_fullForcing.isChecked():
+        if self.dlg.rb_fullForcing.isChecked():
             # show page for full forcing
             self.dlg.stackedWidget_3.setCurrentIndex(1)
             if (self.dlg.le_selectedFOX.text() == '') or self.dlg.le_selectedFOX.text().isspace():
@@ -1571,14 +1706,10 @@ class Geo2ENVImet:
                 self.dlg.lb_meteorology.setText(self.meteoSettings_states[2])
                 self.dlg.cb_meteo.setCheckState(Qt.CheckState.Checked)
         else:
-            # show page for open/cyclic
-            self.dlg.stackedWidget_3.setCurrentIndex(2)
-            self.dlg.lb_meteorology.setText(self.meteoSettings_states[3])
+            # show page for simple forcing
+            self.dlg.stackedWidget_3.setCurrentIndex(0)
+            self.dlg.lb_meteorology.setText(self.meteoSettings_states[0])
             self.dlg.cb_meteo.setCheckState(Qt.CheckState.Checked)
-
-    @staticmethod
-    def switch_enabled_tab(tab):
-        tab.setEnabled(not tab.isEnabled())
 
     def clear_settings_create_sim_tab(self):
         # clears the settings in the Create ENVI-met simulation tab
@@ -1639,17 +1770,16 @@ class Geo2ENVImet:
         # Simple Forcing
         self.dlg.sb_timeMaxT.setValue(16)
         self.dlg.sb_timeMinT.setValue(5)
-        self.dlg.sb_timeMaxHum.setValue(5)
+        self.dlg.sb_timeMaxHum.setValue(4)
         self.dlg.sb_timeMinHum.setValue(16)
         self.dlg.hs_maxT.setValue(28)
         self.dlg.hs_minT.setValue(17)
         self.dlg.hs_maxHum.setValue(75)
-        self.dlg.hs_minHum.setValue(45)
-        self.dlg.sb_specHum.setValue(8.00)
+        self.dlg.hs_minHum.setValue(43)
         self.update_temp_and_hum_simpleforcing()
 
-        self.dlg.sb_windspeed.setValue(1.50)
-        self.dlg.sb_winddir.setValue(270.00)
+        self.dlg.sb_windspeed.setValue(2.00)
+        self.dlg.sb_winddir.setValue(90.00)
         self.dlg.sb_rlength.setValue(0.10)
         self.dlg.sb_lowclouds.setValue(0)
         self.dlg.sb_midclouds.setValue(0)
@@ -1664,7 +1794,7 @@ class Geo2ENVImet:
         self.dlg.rb_forceT_yes.setChecked(True)
         self.dlg.rb_forceRadC_yes.setChecked(True)
         self.dlg.rb_forceHum_yes.setChecked(True)
-        self.dlg.rb_forcePrec_yes.setChecked(True)
+        self.dlg.rb_forcePrec_no.setChecked(True)
         self.dlg.sb_constWS_FUFo.setValue(2.00)
         self.dlg.sb_constWD_FuFo.setValue(135.00)
         self.dlg.sb_rlength_FuFo.setValue(0.10)
@@ -1673,29 +1803,28 @@ class Geo2ENVImet:
         self.dlg.sb_mediumclouds.setValue(0)
         self.dlg.sb_highclouds_2.setValue(0)
         self.dlg.sb_relHum.setValue(50.00)
-        self.dlg.sb_specHum_2.setValue(8.00)
         self.dlg.stackedWidget_4.setCurrentIndex(0)
         self.dlg.stackedWidget_5.setCurrentIndex(1)
         self.dlg.stackedWidget_6.setCurrentIndex(0)
         self.dlg.stackedWidget_7.setCurrentIndex(1)
 
-        # Soil
-        self.dlg.sb_soilHumUpper.setValue(65.00)
-        self.dlg.sb_soilHumMiddle.setValue(70.00)
-        self.dlg.sb_soilHumLower.setValue(75.00)
-        self.dlg.sb_soilHumBedrock.setValue(75.00)
-        self.dlg.sb_soilTupper.setValue(20.00)
-        self.dlg.sb_soilTmiddle.setValue(20.00)
-        self.dlg.sb_soilTlower.setValue(19.00)
-        self.dlg.sb_soilTbedrock.setValue(18.00)
+        # Soil (ENVI-met 6: % of the usable field capacity; negative: % of the wilting point)
+        self.dlg.sb_soilHumUpper.setValue(45.00)
+        self.dlg.sb_soilHumMiddle.setValue(50.00)
+        self.dlg.sb_soilHumLower.setValue(55.00)
+        self.dlg.sb_soilHumBedrock.setValue(60.00)
 
         # Radiation
         self.dlg.cb_resIVS.setCurrentIndex(1)
 
-        # Buildings
-        self.dlg.sb_bldTmp.setValue(20.00)
-        self.dlg.sb_bldSurfTmp.setValue(20.00)
-        self.dlg.rb_indoorNo.setChecked(True)
+        # Indoor climate (ENVI-met 6 defaults, as in ENVI-guide)
+        defaults = simx_ui.INDOOR_DEFAULTS
+        self.dlg.cb_naturalVentilation.setCurrentIndex(defaults['naturalVentilation'])
+        self.dlg.cb_indoorMode.setCurrentIndex(defaults['indoorMode'])
+        self.dlg.cb_indoorUse.setCurrentIndex(defaults['defaultBuildingUse'])
+        self.dlg.sb_indoorLower.setValue(defaults['indoorLowerC'])
+        self.dlg.sb_indoorUpper.setValue(defaults['indoorUpperC'])
+        self.update_indoor_page()
 
         # Pollutants
         self.dlg.sb_NO.setValue(0.00)
@@ -1717,146 +1846,35 @@ class Geo2ENVImet:
         self.dlg.cb_outputVegData.setCheckState(Qt.CheckState.Checked)
         self.dlg.sb_outputIntRecBld.setValue(30)
         self.dlg.sb_outputIntOther.setValue(60)
-        self.dlg.rb_writeNetCDFNo.setChecked(True)
 
         # Expert
-        self.dlg.rb_newSOR.setChecked(True)
-        self.dlg.rb_DIN6946.setChecked(True)
         self.dlg.rb_threadingMain.setChecked(True)
-        self.dlg.rb_avgInflowNo.setChecked(True)
-        self.dlg.rb_avgInflowNo.setChecked(True)
-        self.dlg.cb_TKE.setCurrentIndex(3)
-        self.dlg.rb_tkeLimitY.setChecked(True)
+
+        # Simulation type and Module page
+        simx_ui.clear_module_page(self.dlg)
+
+        # nothing loaded: a saved file only holds what the tab shows
+        self.loaded_simx = None
 
         # trigger update event for meteo-settings
-        self.select_forcing_mode()
+        self.update_simulation_type()
 
     def update_temp_and_hum_simpleforcing(self):
-        # linear interpolation
-        time_Tmax = self.dlg.sb_timeMaxT.value()
-        time_Tmin = self.dlg.sb_timeMinT.value()
-        time_Hmax = self.dlg.sb_timeMaxHum.value()
-        time_Hmin = self.dlg.sb_timeMinHum.value()
-        maxT = self.dlg.hs_maxT.value()
-        minT = self.dlg.hs_minT.value()
-        maxH = self.dlg.hs_maxHum.value()
-        minH = self.dlg.hs_minHum.value()
-
-        timeDiff_minToMaxT = abs(time_Tmax - time_Tmin)
-        valDiff_minToMaxT = abs(maxT - minT)
-        ratio_T_intraday = valDiff_minToMaxT / timeDiff_minToMaxT
-        if time_Tmax > time_Tmin:
-            ratio_T_overnight = valDiff_minToMaxT / (24 - time_Tmax + time_Tmin)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxT + 1):
-                val = str(round(minT + j * ratio_T_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Tmin)
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # max to midnight
-            cnt = 1
-            for j in range(time_Tmax + 1, 24):
-                val = str(round(maxT - cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # min downto midnight
-            cnt = 1
-            for j in range(time_Tmin - 1, -1, -1):
-                val = str(round(minT + cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-        else:
-            ratio_T_overnight = valDiff_minToMaxT / (24 - time_Tmin + time_Tmax)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxT + 1):
-                val = str(round(maxT - j * ratio_T_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Tmax)
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # min to midnight
-            cnt = 1
-            for j in range(time_Tmin + 1, 24):
-                val = str(round(minT + cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # max downto midnight
-            cnt = 1
-            for j in range(time_Tmax - 1, -1, -1):
-                val = str(round(maxT - cnt * ratio_T_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-
-        timeDiff_minToMaxH = abs(time_Hmax - time_Hmin)
-        valDiff_minToMaxH = abs(maxH - minH)
-        ratio_H_intraday = valDiff_minToMaxH / timeDiff_minToMaxH
-        if time_Hmax > time_Hmin:
-            ratio_H_overnight = valDiff_minToMaxH / (24 - time_Tmax + time_Tmin)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxH + 1):
-                val = str(round(minH + j * ratio_H_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Hmin) + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # max to midnight
-            cnt = 1
-            for j in range(time_Hmax + 1, 24):
-                val = str(round(maxH - cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # min downto midnight
-            cnt = 1
-            for j in range(time_Hmin - 1, -1, -1):
-                val = str(round(minH + cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-        else:
-            ratio_H_overnight = valDiff_minToMaxH / (24 - time_Hmin + time_Hmax)
-            # intraday values
-            for j in range(0, timeDiff_minToMaxH + 1):
-                val = str(round(maxH - j * ratio_H_intraday, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * (j + time_Hmax) + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-            # min to midnight
-            cnt = 1
-            for j in range(time_Hmin + 1, 24):
-                val = str(round(minH + cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
-            # max downto midnight
-            cnt = 1
-            for j in range(time_Hmax - 1, -1, -1):
-                val = str(round(maxH - cnt * ratio_H_overnight, 2))
-                item = QtWidgets.QTableWidgetItem(0)
-                idx = 2 * j + 1
-                self.dlg.tableWidget.setItem(0, idx, item)
-                item.setText(val)
-                cnt += 1
+        # linear interpolation between the daily extremes; table row = hour, column 0 = T, 1 = rel. humidity
+        try:
+            temperature = diurnal_profile(self.dlg.sb_timeMinT.value(), self.dlg.sb_timeMaxT.value(),
+                                          self.dlg.hs_minT.value(), self.dlg.hs_maxT.value())
+            humidity = diurnal_profile(self.dlg.sb_timeMinHum.value(), self.dlg.sb_timeMaxHum.value(),
+                                       self.dlg.hs_minHum.value(), self.dlg.hs_maxHum.value())
+        except ValueError:
+            self.iface.messageBar().pushMessage(
+                "Error", "Simple forcing: the minimum and the maximum of air temperature and of humidity "
+                         "must be at different times of day.", level=Qgis.Warning)
+            return
+        for hour in range(24):
+            for column, values in ((0, temperature), (1, humidity)):
+                item = QtWidgets.QTableWidgetItem(str(round(values[hour], 2)))
+                self.dlg.tableWidget.setItem(hour, column, item)
 
     def setup_ui_export_layers_tab(self):
         # include coordinate-reference-system of a layer in the combo-box text
@@ -1924,6 +1942,28 @@ class Geo2ENVImet:
         self.dlg.cb_srcLID.setFilters(QgsFieldProxyModel.String)
         self.dlg.cb_srcAID.setFilters(QgsFieldProxyModel.String)
 
+        # indoor climate per building (ENVI-met 6); text and number fields both work
+        self.dlg.cmb_bUse.addItems(core_indoor.USE_LABELS)
+        self.dlg.cmb_bIndoorMode.addItems(core_indoor.MODE_LABELS)
+        self.dlg.le_bIndoorLower.setValidator(QDoubleValidator(-50.0, 60.0, 2, self.dlg))
+        self.dlg.le_bIndoorUpper.setValidator(QDoubleValidator(-50.0, 60.0, 2, self.dlg))
+        self.dlg.le_bInternalGain.setValidator(QDoubleValidator(0.0, 1000.0, 2, self.dlg))
+        for _, name in self.INDOOR_WIDGETS:
+            getattr(self.dlg, f'cb_{name}').setAllowEmptyFieldName(True)
+            getattr(self.dlg, f'cb_{name}').fieldChanged.connect(
+                lambda *_: self.update_summary(self.dlg.cb_summary_buildings))
+            getattr(self.dlg, f'chk_{name}').clicked.connect(
+                lambda *_: self.update_summary(self.dlg.cb_summary_buildings))
+
+        # surrounding area (ENVI-met 6)
+        for border in core_surrounding.BORDERS:
+            box = getattr(self.dlg, f'cb_border{border}')
+            box.addItems(core_surrounding.TYPES)
+            box.setCurrentIndex(core_surrounding.DEFAULT_TYPE)
+        self.dlg.chk_surroundingArea.toggled.connect(lambda *_: self.update_surrounding_page())
+        self.dlg.cb_subArea.layerChanged.connect(lambda *_: self.update_surrounding_page())
+        self.update_surrounding_page()
+
         self.dlg.cb_buildingLayer.layerChanged.connect(self.select_cb_buildingClick)
         self.dlg.cb_surfLayer.layerChanged.connect(self.select_cb_surfClick)
         self.dlg.cb_simplePlantLayer.layerChanged.connect(self.select_cb_simplePlantClick)
@@ -1939,15 +1979,15 @@ class Geo2ENVImet:
 
         self.dlg.cb_subArea.layerChanged.connect(self.select_cb_subAreaClick)
         self.dlg.bt_SaveTo.clicked.connect(lambda: self.select_output_file(filetype='INX'))
-        self.dlg.se_dx.valueChanged.connect(self.startWorkerPreviewdxyz)
-        self.dlg.se_dy.valueChanged.connect(self.startWorkerPreviewdxyz)
-
-        self.dlg.se_dz.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.se_zGrids.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.se_teleStart.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.se_teleStretch.valueChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.chk_useSplitting.stateChanged.connect(self.startWorkerPreviewdz)
-        self.dlg.chk_useTelescoping.stateChanged.connect(self.startWorkerPreviewdz)
+        # previews start once the values have stopped changing, not on every step of a spin box
+        self.preview_xy_timer = self.single_shot_timer(self.startWorkerPreviewdxyz)
+        self.preview_z_timer = self.single_shot_timer(self.startWorkerPreviewdz)
+        for widget in (self.dlg.se_dx, self.dlg.se_dy):
+            widget.valueChanged.connect(lambda *_: self.preview_xy_timer.start())
+        for widget in (self.dlg.se_dz, self.dlg.se_zGrids, self.dlg.se_teleStart, self.dlg.se_teleStretch):
+            widget.valueChanged.connect(lambda *_: self.preview_z_timer.start())
+        for widget in (self.dlg.chk_useSplitting, self.dlg.chk_useTelescoping):
+            widget.stateChanged.connect(lambda *_: self.preview_z_timer.start())
 
         self.dlg.bt_SaveINX.clicked.connect(lambda: self.start_worker_inx())
 
@@ -2029,6 +2069,26 @@ class Geo2ENVImet:
         self.dlg.cb_summary_simpleplants.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.dlg.cb_summary_simpleplants.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
+    PREVIEW_DELAY_MS = 400
+
+    def single_shot_timer(self, slot):
+        timer = QTimer(self.dlg)
+        timer.setSingleShot(True)
+        timer.setInterval(self.PREVIEW_DELAY_MS)
+        timer.timeout.connect(lambda: self.when_no_worker_runs(slot, timer))
+        return timer
+
+    def when_no_worker_runs(self, slot, timer):
+        """Run ``slot`` unless a worker thread is busy; then try again later."""
+        try:
+            busy = self.thread is not None and self.thread.isRunning()
+        except RuntimeError:        # the thread object has been deleted: nothing runs
+            busy = False
+        if busy:
+            timer.start()
+        else:
+            slot()
+
     def select_surface_source(self):
         if self.dlg.rb_surfVector.isChecked():
             # show page for vector input
@@ -2066,7 +2126,9 @@ class Geo2ENVImet:
                     or ((self.dlg.cb_bWall.currentField() == "") and not (self.dlg.chk_bWall.isChecked())) \
                     or ((self.dlg.cb_bRoof.currentField() == "") and not (self.dlg.chk_bRoof.isChecked())) \
                     or ((self.dlg.cb_bName.currentField() == "") and not (self.dlg.chk_bName.isChecked())) \
-                    or ((self.dlg.cb_bBPS.currentField() == "") and not (self.dlg.chk_bBPS.isChecked())):
+                    or ((self.dlg.cb_bBPS.currentField() == "") and not (self.dlg.chk_bBPS.isChecked())) \
+                    or any(getattr(self.dlg, f'cb_{name}').currentField() == ""
+                           and not getattr(self.dlg, f'chk_{name}').isChecked() for _, name in self.INDOOR_WIDGETS):
                 # unchecked = 0
                 summary_checkBox.setCheckState(Qt.CheckState.Unchecked)
             else:

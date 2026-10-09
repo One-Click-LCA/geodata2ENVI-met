@@ -1,21 +1,16 @@
 import math
-import sys
-import json
 import time
-from math import degrees, floor
+from math import degrees
 
 import numpy as np
-import requests
 import pyproj
 from pyproj.database import query_utm_crs_info
 from osgeo import gdal, osr
 
 from qgis.PyQt.QtCore import Qt, QObject, QDate, QTime, pyqtSignal
-from qgis.core import (QgsProject, Qgis, QgsField, QgsPoint, QgsPointXY, QgsVectorLayer, QgsRectangle,
+from qgis.core import (Qgis, QgsField, QgsPoint, QgsPointXY, QgsVectorLayer, QgsRectangle,
                        QgsFeatureRequest, QgsMessageLog, QgsRasterLayer, QgsGeometry, QgsFeature,
-                       QgsRasterBlock, QgsRasterBandStats, QgsProcessing,
-                       QgsRasterShader, QgsColorRampShader,
-                       QgsSingleBandPseudoColorRenderer, QgsStyle, QgsRasterRendererUtils)
+                       QgsCoordinateTransform, QgsCoordinateTransformContext, QgsReferencedRectangle)
 # QgsGeometryUtils.angleBetweenThreePoints() is deprecated from QGIS 3.40 on;
 # the identical method lives on QgsGeometryUtilsBase (added in QGIS 3.34).
 try:
@@ -25,20 +20,16 @@ except ImportError:
 import processing
 from processing.tools import dataobjects
 
-from .simx_manager import SIMX
-from .Helper_Functions import get_color_scale_interpolation, get_color_scale_mode
-from .Dataseries_handler import dataseries, timestep, merged_timestep
-from .Const_defines import (C_NODATA_VALUE, C_SAMPLING_METHOD,
-                            C_COLOR_SCALE_STEPS, C_COLOR_SCALE_NAME,
-                            C_COLOR_SCALE_INVERT, C_COLOR_SCALE_USE_CUSTOM,
-                            C_COLOR_SCALE_CUSTOM_PATH,
-                            C_VECTORLAYER_TYPE_POINT, C_VECTORLAYER_TYPE_POLYGON,
-                            FIELD_TYPE_INT, FIELD_TYPE_STRING)
-from .worker_helpers import get_UTM_zone, getQGIS_crs
+from .Const_defines import C_NODATA_VALUE, FIELD_TYPE_INT, FIELD_TYPE_STRING
+from .worker_helpers import get_UTM_zone
+from .core.grid import raster_to_envimet_ij, raster_to_inx_receptor_cell
+from .core.inx_arrays import border_mask, first_non_empty, map_codes, map_values
+from .core import indoor, inx, location, surrounding
 
 
 class Building:
-    def __init__(self, BldInternalNum, BldName, BldWallMat, BldRoofMat, BldFacadeGreen, BldRoofGreen, BldBPS, BldInModelArea):
+    def __init__(self, BldInternalNum, BldName, BldWallMat, BldRoofMat, BldFacadeGreen, BldRoofGreen, BldBPS, BldInModelArea,
+                 indoor_settings=None):
         self.BuildingInternalNumber = BldInternalNum
         self.BuildingName = BldName
         self.BuildingWallMaterial = BldWallMat
@@ -47,6 +38,8 @@ class Building:
         self.BuildingRoofGreening = BldRoofGreen
         self.BuildingBPS = BldBPS
         self.BuildingInModelArea = BldInModelArea
+        # use/mode/lower/upper/gain -> value as read; parsed when written (core.indoor)
+        self.indoor = indoor_settings or {}
 
 
 class TmpTree3D:
@@ -128,6 +121,14 @@ class Worker(QObject):
         self.bGreenWall_UseCustom = False
         self.bGreenRoof_UseCustom = False
         self.bBPS_disabled = False
+        # indoor climate per building (ENVI-met 6): key -> (attribute field or None, static value);
+        # empty values mean "not stated", so the simulation's setting applies
+        self.bIndoor = {key: (None, '') for key in indoor.PARSERS}
+        self.bSuppressACHeat = False
+
+        # surrounding area (ENVI-met 6): on/off and the type index per border
+        self.useSurroundingArea = True
+        self.surroundingBorders = {border: surrounding.DEFAULT_TYPE for border in surrounding.BORDERS}
 
         self.surfLayerfromVector = True
 
@@ -193,6 +194,8 @@ class Worker(QObject):
 
         self.lon = 0.0
         self.lat = 0.0
+        self.target_epsg = None     # UTM CRS of the sub-area; every input is projected into it
+        self.warnings = []          # shown to the user when the export has finished
         self.UTMZone = -1
         self.UTMHemisphere = 'N'
         self.timeZoneName = ""
@@ -214,9 +217,6 @@ class Worker(QObject):
         self.bNOTFixedH = True
         self.startSurfID = "0200PP"
         self.removeVegBuild = True
-
-        # Set the printoptions to maximum to print whole arrays of all following print functions
-        np.set_printoptions(threshold=sys.maxsize)
 
     # ==================================================================
     # Geometry, rotation and processing helpers
@@ -260,29 +260,6 @@ class Worker(QObject):
                                     "OUTPUT": 'TEMPORARY_OUTPUT'},
                                    context=context)
         return self.rotate_layer(extracted["OUTPUT"], False)
-
-    def _clip_raster_by_mask(self, input_layer, mask, crs, context):
-        """Clip a raster to ``mask`` (used as cutline), using ``crs`` for both
-        source and target. Returns the processing OUTPUT (raster file path)."""
-        return processing.run("gdal:cliprasterbymasklayer",
-                              {'INPUT': input_layer,
-                               'MASK': mask,
-                               'SOURCE_CRS': crs,
-                               'TARGET_CRS': crs,
-                               'TARGET_EXTENT': None,
-                               'NODATA': C_NODATA_VALUE,
-                               'ALPHA_BAND': False,
-                               'CROP_TO_CUTLINE': True,
-                               'KEEP_RESOLUTION': False,
-                               'SET_RESOLUTION': False,
-                               'X_RESOLUTION': None,
-                               'Y_RESOLUTION': None,
-                               'MULTITHREADING': False,
-                               'OPTIONS': '',
-                               'DATA_TYPE': 0,  # use input data-type
-                               'EXTRA': '',
-                               'OUTPUT': 'TEMPORARY_OUTPUT'},
-                              context=context)['OUTPUT']
 
     def get_modelrot(self):
         """
@@ -476,36 +453,21 @@ class Worker(QObject):
     # Location, elevation and CRS lookups (online)
     # ==================================================================
     def get_time_zone_geonames(self):
+        """Hours east of UTC of the location's standard time (ENVI-met uses local standard time)."""
         QgsMessageLog.logMessage("Getting Timezone...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        try:
-            url = 'http://api.geonames.org/timezoneJSON?lat=' + str(self.lat) + '&lng=' \
-                  + str(self.lon) + '&username=envi_met'
-            response = requests.get(url, timeout=20)
-            if response.status_code == 200:
-                data = json.loads(response.text)
-                if "status" not in data and "gmtOffset" in data:
-                    return str(data["gmtOffset"])
-                return str(round(self.lon / 15))
-            else:
-                return str(round(self.lon / 15))
-        except Exception:
-            return str(round(self.lon / 15))
+        offset, problem = location.standard_time_offset(self.lat, self.lon)
+        if problem:
+            self.warnings.append(f"Time zone: {problem}; estimated from the longitude as UTC{offset:+g}. "
+                                 f"Check the time zone in the model area's location settings.")
+        return str(offset)
 
     def get_elevation_geonames(self):
         QgsMessageLog.logMessage("Getting Elevation...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        try:
-            response = requests.get('http://api.geonames.org/srtm1JSON?lat=' + str(self.lat) + '&lng=' + str(self.lon) + '&username=envi_met', timeout=20)
-            if response.status_code == 200:
-                data = json.loads(response.text)
-                if "srtm1" in data:
-                    elev = int(data["srtm1"])
-                    if elev >= 0:
-                        return elev
-                return self.refHeightDEM
-            else:
-                return self.refHeightDEM
-        except Exception:
+        elevation = location.elevation(self.lat, self.lon)
+        if elevation is None:
+            self.warnings.append("Elevation: GeoNames gave none; the terrain reference height is used instead.")
             return self.refHeightDEM
+        return elevation
 
     def find_crs_auth_id(self, crs_description: str) -> int:
         """
@@ -583,6 +545,7 @@ class Worker(QObject):
         # QgsProject.instance().addMapLayer(self.bLayer_rot)
 
         # we now have building numbers for all elements, but we should only write the ones that are in our extent
+        unreadable = {}
         for f in self.bLayer_rot.getFeatures():
             if f.geometry().intersects(self.subAreaExtent):
                 s_bNumber = f.attribute(bNumber_int)
@@ -619,13 +582,30 @@ class Worker(QObject):
                     else:
                         s_bBPS = '0'
 
+                indoor_settings = self._indoor_settings(f, unreadable)
                 newBuild = Building(BldInternalNum=s_bNumber, BldName=s_bName, BldWallMat=s_bWall, BldRoofMat=s_bRoof,
-                                    BldFacadeGreen=s_bGWall, BldRoofGreen=s_bGRoof, BldBPS=s_bBPS, BldInModelArea=True)
+                                    BldFacadeGreen=s_bGWall, BldRoofGreen=s_bGRoof, BldBPS=s_bBPS, BldInModelArea=True,
+                                    indoor_settings=indoor_settings)
                 self.s_buildingDict[s_bNumber] = newBuild
-                # print(self.s_buildingDict[s_bNumber].BuildingInternalNumber)
-                # print('as')
 
+        for key, values in unreadable.items():
+            field = self.bIndoor[key][0]
+            source = f"field '{field}'" if field else f"the static {key} value"
+            examples = ', '.join(repr(v) for v in sorted(values)[:3])
+            self.warnings.append(f"Indoor climate: {len(values)} value(s) of {source} could not be read "
+                                 f"({examples}); those buildings use the simulation's setting.")
         QgsMessageLog.logMessage("Finished: Generating Building Info section.", 'ENVI-met', level=Qgis.MessageLevel.Info)
+
+    def _indoor_settings(self, feature, unreadable):
+        """The building's indoor climate values; values that cannot be read are collected in ``unreadable``."""
+        settings = {}
+        for key, (field, constant) in self.bIndoor.items():
+            value = constant if not field else feature.attribute(field)
+            if not indoor.PARSERS[key](value)[1]:
+                unreadable.setdefault(key, set()).add(str(value))
+                value = None
+            settings[key] = value
+        return settings
 
     def rasterBNumber(self):
         if self.bLayer_rot.name() == "notAvail":
@@ -671,8 +651,7 @@ class Worker(QObject):
     # ==================================================================
     def raster_surface_from_vector(self):
         if self.surfLayer.name() == "notAvail":
-            tmpAr = np.empty(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill(self.startSurfID)
+            return np.full(shape=(self.JJ, self.II), fill_value=self.startSurfID, dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Surfaces...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -718,17 +697,9 @@ class Worker(QObject):
 
         grid1_str_array, grid1_int_array = self.rasterize_gdal(input_layer=self.surfLayer_rot, field=ID_int, get_strArray=True)
 
-        # invert dictionary
-        invTmpDict = {v: k for k, v in aTmpDict.items()}
-        for i in range(grid1_int_array.shape[0]):
-            for j in range(grid1_int_array.shape[1]):
-                if grid1_int_array[i, j] <= 0:
-                    grid1_str_array[i, j] = self.startSurfID
-                else:
-                    grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-
+        # integer codes back to ENVI-met IDs; cells without a surface get the starting surface
+        grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, self.startSurfID)
         aTmpDict.clear()
-        invTmpDict.clear()
         QgsMessageLog.logMessage("Finished: Gridding Surfaces.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return grid1_str_array
 
@@ -928,8 +899,8 @@ class Worker(QObject):
 
         reshaped = processing.run("gdal:warpreproject",
                                   {'INPUT': raster_layer,
-                                   'SOURCE_CRS': self.surfLayer_raster.crs(),
-                                   'TARGET_CRS': self.surfLayer_raster.crs(),
+                                   'SOURCE_CRS': input_layer.crs(),
+                                   'TARGET_CRS': input_layer.crs(),
                                    'RESAMPLING': 0,
                                    'NODATA': None,
                                    'TARGET_RESOLUTION': None,
@@ -984,29 +955,25 @@ class Worker(QObject):
         grid1_str_array = grid1_int_array.astype(str)
         return grid1_str_array, grid1_int_array
 
+    def _no_data_grid(self, what):
+        """What a raster outside the model area gives: no data in every cell (then mapped to the default)."""
+        self.warnings.append(f'{what}: the raster does not reach the model area; all cells get the default.')
+        grid1_int_array = np.full((self.JJ, self.II), int(C_NODATA_VALUE), dtype=int)
+        return grid1_int_array.astype(str), grid1_int_array
+
     def raster_surface_from_raster(self):
         # reproject to UTM
         outFN = self.reprojectRasterLayerToUTM(self.surfLayer_raster)
-        self.surfLayer_raster = QgsRasterLayer(outFN, "surfTMP_UTM")
+        if outFN is None:
+            grid1_str_array, grid1_int_array = self._no_data_grid('Surfaces')
+        else:
+            self.surfLayer_raster = QgsRasterLayer(outFN, "surfTMP_UTM")
+            grid1_str_array, grid1_int_array = self.get_data_from_raster(self.surfLayer_raster)
 
-        grid1_str_array, grid1_int_array = self.get_data_from_raster(self.surfLayer_raster)
-
-        for i in range(grid1_str_array.shape[0]):
-            for j in range(grid1_str_array.shape[1]):
-                val = self.surfLayer_raster_def.get(grid1_str_array[i, j])
-                if val is not None:
-                    # this is a specific value the user mapped onto an ENVI-met soil
-                    grid1_str_array[i, j] = val
-                else:
-                    other_val = self.surfLayer_raster_def.get('OTHER')
-                    if other_val is not None:
-                        # 'other' was defined by the user, set the value
-                        grid1_str_array[i, j] = other_val
-                    else:
-                        # 'other' was not defined by the user, so we use 0100SL as default soil
-                        grid1_str_array[i, j] = self.startSurfID
-
-        return grid1_str_array
+        # raster values the user mapped onto ENVI-met soils; others get 'OTHER' if defined,
+        # else the starting surface
+        return map_values(grid1_str_array, self.surfLayer_raster_def, other=self.surfLayer_raster_def.get('OTHER'),
+                          default=self.startSurfID)
 
     def rotate_raster_layer(self, layer):
         dataset = gdal.Open(layer)
@@ -1095,25 +1062,15 @@ class Worker(QObject):
     def raster_simple_plants_from_raster(self):
         # reproject to UTM
         outFN = self.reprojectRasterLayerToUTM(self.plant1dLayer_raster)
-        self.plant1dLayer_raster = QgsRasterLayer(outFN, "spTMP_UTM")
-        grid1_str_array, grid1_int_array = self.get_data_from_raster(self.plant1dLayer_raster)
+        if outFN is None:
+            grid1_str_array, grid1_int_array = self._no_data_grid('Simple plants')
+        else:
+            self.plant1dLayer_raster = QgsRasterLayer(outFN, "spTMP_UTM")
+            grid1_str_array, grid1_int_array = self.get_data_from_raster(self.plant1dLayer_raster)
 
-        for i in range(grid1_str_array.shape[0]):
-            for j in range(grid1_str_array.shape[1]):
-                val = self.plant1dLayer_raster_def.get(grid1_str_array[i, j])
-                if val is not None:
-                    # this is a specific value the user mapped onto an ENVI-met soil
-                    grid1_str_array[i, j] = val
-                else:
-                    other_val = self.plant1dLayer_raster_def.get('OTHER')
-                    if other_val is not None:
-                        # 'other' was defined by the user, set the value
-                        grid1_str_array[i, j] = other_val
-                    else:
-                        # 'other' was not defined by the user, so we use 0100SL as default soil
-                        grid1_str_array[i, j] = ''
-
-        return grid1_str_array
+        # raster values the user mapped onto ENVI-met plants; others get 'OTHER' if defined, else no plant
+        return map_values(grid1_str_array, self.plant1dLayer_raster_def,
+                          other=self.plant1dLayer_raster_def.get('OTHER'), default='')
 
     # ==================================================================
     # Grid conforming and rasterization helpers
@@ -1194,8 +1151,7 @@ class Worker(QObject):
     # ==================================================================
     def raster_simple_plants_from_vector(self):
         if self.plant1dLayer.name() == "notAvail":
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Simple Plants...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -1250,20 +1206,10 @@ class Worker(QObject):
                                                                    get_strArray=True, burn_val=True)
 
         if not self.plant1dID_UseCustom:
-            # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
             aTmpDict.clear()
-            invTmpDict.clear()
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.plant1dID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.plant1dID_custom}, '')
 
         QgsMessageLog.logMessage("Finished: Gridding Simple Plants.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return grid1_str_array
@@ -1317,29 +1263,22 @@ class Worker(QObject):
             grid1_str_array, grid1_int_array = self.rasterize_gdal(input_layer=self.plant3dLayer_rot, field=ID_int,
                                                                    get_strArray=True)
 
+        # one tree per cell with a tree (row by row, as before)
         if self.plant3dID_UseCustom:
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    if grid1_int_array[i, j] == 999:
-                        grid1_str_array[i, j] = self.plant3dID_custom
-                        newTree = dict(rootcell_i=j, rootcell_j=self.JJ - i, rootcell_k=0, plantID=str(self.plant3dID_custom),
-                                       name='Imported Plant', observe=0)
-                        self.s_treeList.append(newTree)
+            for i, j in zip(*np.nonzero(grid1_int_array == 999)):
+                root_i, root_j = raster_to_envimet_ij(int(i), int(j), self.JJ)
+                newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0, plantID=str(self.plant3dID_custom),
+                               name='Imported Plant', observe=0)
+                self.s_treeList.append(newTree)
         else:
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        tmpTree = aTmpDict.get(grid1_int_array[i, j])
-                        if tmpTree is not None:
-                            grid1_str_array[i, j] = tmpTree.enviID
-                            newTree = dict(rootcell_i=j, rootcell_j=self.JJ - i, rootcell_k=0,
-                                           plantID=tmpTree.enviID.replace("NULL", ""), name='Imported Plant',
-                                           observe=tmpTree.obs)
-                            self.s_treeList.append(newTree)
+            for i, j in zip(*np.nonzero(grid1_int_array > 0)):
+                tmpTree = aTmpDict.get(int(grid1_int_array[i, j]))
+                if tmpTree is not None:
+                    root_i, root_j = raster_to_envimet_ij(int(i), int(j), self.JJ)
+                    newTree = dict(rootcell_i=root_i, rootcell_j=root_j, rootcell_k=0,
+                                   plantID=tmpTree.enviID.replace("NULL", ""), name='Imported Plant',
+                                   observe=tmpTree.obs)
+                    self.s_treeList.append(newTree)
             aTmpDict.clear()
 
         QgsMessageLog.logMessage("Finished: Gridding 3D Plants.", 'ENVI-met', level=Qgis.MessageLevel.Info)
@@ -1454,8 +1393,7 @@ class Worker(QObject):
     # ==================================================================
     def rasterSrcP(self):
         if self.srcPLayer.name() == "notAvail":
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
         QgsMessageLog.logMessage("Started: Gridding Sources (Points)...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
         # reproject to UTM
@@ -1502,17 +1440,9 @@ class Worker(QObject):
 
         if not self.srcPID_UseCustom:
             # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-            invTmpDict.clear()
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.srcPID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.srcPID_custom}, '')
 
         aTmpDict.clear()
 
@@ -1521,8 +1451,7 @@ class Worker(QObject):
 
     def rasterSrcL(self):
         if self.srcLLayer.name() == "notAvail" or (self.srcLID_UseCustom and (self.srcLID_custom == "notAvail")):
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Sources (Lines)...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -1573,17 +1502,9 @@ class Worker(QObject):
 
         if not self.srcLID_UseCustom:
             # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-            invTmpDict.clear()
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.srcLID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.srcLID_custom}, '')
 
         aTmpDict.clear()
 
@@ -1592,8 +1513,7 @@ class Worker(QObject):
 
     def rasterSrcA(self):
         if self.srcALayer.name() == "notAvail":
-            tmpAr = np.zeros(shape=(self.JJ, self.II), dtype='<U6')
-            return tmpAr.fill("")
+            return np.full(shape=(self.JJ, self.II), fill_value="", dtype='<U6')
 
         QgsMessageLog.logMessage("Started: Gridding Sources (Areas)...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
@@ -1643,17 +1563,9 @@ class Worker(QObject):
 
         if not self.srcAID_UseCustom:
             # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-            invTmpDict.clear()
+            grid1_str_array = map_codes(grid1_int_array, {v: k for k, v in aTmpDict.items()}, '')
         else:
-            grid1_str_array[grid1_int_array <= 0] = ""
-            grid1_str_array[grid1_int_array == 999] = self.srcAID_custom
+            grid1_str_array = map_codes(grid1_int_array, {999: self.srcAID_custom}, '')
 
         aTmpDict.clear()
 
@@ -1714,31 +1626,22 @@ class Worker(QObject):
             # QgsVectorFileWriter.writeAsVectorFormat(self.recLayer_rot, "C:/Users/simonhe/AppData/Local/Temp/processing_HWIddK/760a68c50707482880b5084165a1d3b3/a", "UTF-8", self.recLayer_rot.crs(), "ESRI Shapefile")
             # print(grid1_str_array)
 
-        ENVI_ID_int = -1
+        # one receptor per cell with a receptor (row by row, as before)
         if self.recID_UseCustom:
             self.recID_custom = "r_"
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    if grid1_int_array[i, j] == 999:
-                        ENVI_ID_int = ENVI_ID_int + 1
-                        grid1_str_array[i, j] = self.recID_custom + "{:04d}".format(ENVI_ID_int)
-                        newRec = dict(cell_i=j, cell_j=self.JJ - i, name=str(grid1_str_array[i, j]))
-                        self.s_recList.append(newRec)
+            for number, (i, j) in enumerate(zip(*np.nonzero(grid1_int_array == 999))):
+                cell_i, cell_j = raster_to_inx_receptor_cell(int(i), int(j), self.JJ)
+                newRec = dict(cell_i=cell_i, cell_j=cell_j, name=self.recID_custom + "{:04d}".format(number))
+                self.s_recList.append(newRec)
         else:
-            # invert dictionary
-            invTmpDict = {v: k for k, v in aTmpDict.items()}
-            for i in range(grid1_int_array.shape[0]):
-                for j in range(grid1_int_array.shape[1]):
-                    if grid1_int_array[i, j] <= 0:
-                        grid1_str_array[i, j] = ""
-                    else:
-                        grid1_str_array[i, j] = invTmpDict[grid1_int_array[i, j]]
-                        newRec = dict(cell_i=j, cell_j=self.JJ - i, name=str(grid1_str_array[i, j]))
-                        self.s_recList.append(newRec)
+            names = {v: k for k, v in aTmpDict.items()}
+            for i, j in zip(*np.nonzero(grid1_int_array > 0)):
+                name = names.get(int(grid1_int_array[i, j]))
+                if name is not None:
+                    cell_i, cell_j = raster_to_inx_receptor_cell(int(i), int(j), self.JJ)
+                    newRec = dict(cell_i=cell_i, cell_j=cell_j, name=str(name))
+                    self.s_recList.append(newRec)
             aTmpDict.clear()
-            invTmpDict.clear()
 
         QgsMessageLog.logMessage("Finished: Gridding Receptors.", 'ENVI-met', level=Qgis.MessageLevel.Info)
         return self.s_recList
@@ -1747,6 +1650,18 @@ class Worker(QObject):
     # Reprojection helpers
     # ==================================================================
     def reprojectLayerToUTM(self, aLayer, isSubAreaLayer: bool):
+        context = self.get_safe_processing_context()
+        if not isSubAreaLayer and self.target_epsg is not None:
+            # Every input goes into the sub-area's UTM zone, whatever its own extent (the zone used to be
+            # taken from each layer's extent corner, so one far-away feature moved the whole layer).
+            # Only the features near the sub-area are reprojected.
+            near = processing.run('native:extractbyextent',
+                                  {'INPUT': aLayer, 'EXTENT': self._sub_area_extent_referenced(), 'CLIP': False,
+                                   'OUTPUT': 'memory:near'}, context=context)['OUTPUT']
+            return processing.run('native:reprojectlayer',
+                                  {'INPUT': near, 'TARGET_CRS': 'EPSG:' + str(self.target_epsg),
+                                   'OUTPUT': 'memory:Reprojected'}, context=context)['OUTPUT']
+
         # print(aLayer.crs().authid().split(":")[1])
         if not (aLayer.crs().authid().split(":")[1] == str(4326)):
             # print('in_if')
@@ -1775,8 +1690,8 @@ class Worker(QObject):
             self.lat = lat
             self.UTMZone = aUTMZone.split(" ")[0]
             self.UTMHemisphere = aUTMZone.split(" ")[1]
+            self.target_epsg = auth_id
 
-        context = self.get_safe_processing_context()
         parameter = {
             'INPUT': aLayer,
             'TARGET_CRS': 'EPSG:' + str(auth_id),
@@ -1784,19 +1699,42 @@ class Worker(QObject):
         }
         return processing.run('native:reprojectlayer', parameter, context=context)['OUTPUT']
 
-    def reprojectRasterLayerToUTM(self, aLayer):
-        proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
-        x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
-        lon, lat = proj.transform(x1, y1)
-        aUTMZone = get_UTM_zone(lon, lat)
-        # print(aUTMZone)
-        auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ', ''))
-        # print(auth_id)
+    def _sub_area_extent(self, margin=50.0):
+        """Extent of the (unrotated) sub-area in its UTM CRS, grown by ``margin`` metres."""
+        extent = QgsRectangle(self.subAreaLayer_nonRot.extent())
+        extent.grow(margin)
+        return extent
 
+    def _sub_area_extent_referenced(self, margin=50.0):
+        return QgsReferencedRectangle(self._sub_area_extent(margin), self.subAreaLayer_nonRot.crs())
+
+    def reprojectRasterLayerToUTM(self, aLayer):
+        """The raster warped into the sub-area's UTM zone, or None if it does not reach the model area."""
         context = self.get_safe_processing_context()
+        source_crs = aLayer.crs()
+        if self.target_epsg is not None:
+            # the sub-area's zone; and only the part of the raster around the sub-area is warped
+            auth_id = self.target_epsg
+            transform = QgsCoordinateTransform(self.subAreaLayer_nonRot.crs(), aLayer.crs(),
+                                               QgsCoordinateTransformContext())
+            window = transform.transformBoundingBox(self._sub_area_extent(margin=150.0))
+            window = window.intersect(aLayer.extent())
+            if window.isEmpty():
+                # nothing of it lies in the model area: warping all of it would only give no-data cells
+                return None
+            aLayer = processing.run("gdal:cliprasterbyextent",
+                                    {"INPUT": aLayer, "PROJWIN": window, "OVERCRS": False,
+                                     "OUTPUT": 'TEMPORARY_OUTPUT'}, context=context)['OUTPUT']
+        else:
+            proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
+            x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
+            lon, lat = proj.transform(x1, y1)
+            aUTMZone = get_UTM_zone(lon, lat)
+            auth_id = self.find_crs_auth_id("WGS 84 / UTM zone " + aUTMZone.replace(' ', ''))
+
         reshaped = processing.run("gdal:warpreproject",
                                   {'INPUT': aLayer,
-                                   'SOURCE_CRS': aLayer.crs(),
+                                   'SOURCE_CRS': source_crs,
                                    'TARGET_CRS': 'EPSG:' + str(auth_id),
                                    'RESAMPLING': 0,
                                    'OPTIONS': '',
@@ -1894,10 +1832,7 @@ class Worker(QObject):
         # fixed height tag not supported yet
         bFixHeight_int_array = np.zeros(shape=(self.JJ, self.II), dtype=int)
         if not self.bNOTFixedH:
-            for i in range(bTop_int_array.shape[0]):
-                for j in range(bTop_int_array.shape[1]):
-                    if bTop_int_array[i, j] > 0:
-                        bFixHeight_int_array[i, j] = 1
+            bFixHeight_int_array[bTop_int_array > 0] = 1
         self.progress.emit(20)
 
         # plants1d
@@ -1982,18 +1917,8 @@ class Worker(QObject):
         else:
             srcA_str_array = self.rasterSrcA()
 
-        # now handle srcArray P > L > A
-        src_int_array = np.zeros(shape=(self.JJ, self.II), dtype=int)   # create a new array that holds all sources
-        src_str_array = src_int_array.astype(str)
-        for i in range(srcA_str_array.shape[0]):
-            for j in range(srcA_str_array.shape[1]):
-                src_str_array[i, j] = ""
-                if not srcA_str_array[i, j] == "":
-                    src_str_array[i, j] = srcA_str_array[i, j]
-                if not srcL_str_array[i, j] == "":
-                    src_str_array[i, j] = srcL_str_array[i, j]
-                if not srcP_str_array[i, j] == "":
-                    src_str_array[i, j] = srcP_str_array[i, j]
+        # one source per cell: points before lines before areas
+        src_str_array = first_non_empty(srcP_str_array, srcL_str_array, srcA_str_array)
 
         self.progress.emit(60)
 
@@ -2012,19 +1937,11 @@ class Worker(QObject):
         QgsMessageLog.logMessage("Preparing Model Border...", 'ENVI-met', level=Qgis.MessageLevel.Info)
         # empty cells at border -> only for buildings
         if self.removeBBorder > 0:
-            bRemSet = set(())
-            for i in range(bTop_int_array.shape[0]):
-                for j in range(bTop_int_array.shape[1]):
-                    # bTop; bBot; bNumber2d
-                    if (i < self.removeBBorder) or (j < self.removeBBorder) or (
-                            i > (bTop_int_array.shape[0] - self.removeBBorder)) or (
-                            j > (bTop_int_array.shape[1] - self.removeBBorder)):
-                        if bNumber_int_array[i, j] > 0:
-                            bRemSet.add(bNumber_int_array[i, j])
-                        bFixHeight_int_array[i, j] = 0
-                        bTop_int_array[i, j] = 0
-                        bBot_int_array[i, j] = 0
-                        bNumber_int_array[i, j] = 0
+            # the same number of cells on every side (the south and east sides kept one row/column more)
+            border = border_mask(bTop_int_array.shape, self.removeBBorder)
+            bRemSet = set(np.unique(bNumber_int_array[border & (bNumber_int_array > 0)]).tolist())
+            for array in (bFixHeight_int_array, bTop_int_array, bBot_int_array, bNumber_int_array):
+                array[border] = 0
             # now update bList — drop buildings that no longer have any cells
             remaining_buildings = set(np.unique(bNumber_int_array).tolist())
             for bRem in bRemSet:
@@ -2059,7 +1976,7 @@ class Worker(QObject):
             building_mask = bNumber_int_array > 0
             simplePlant_str_array[building_mask] = ""
             i_idx, j_idx = np.where(building_mask)
-            blocked_cells = {(int(j), int(self.JJ - i)) for i, j in zip(i_idx, j_idx)}
+            blocked_cells = {raster_to_envimet_ij(int(i), int(j), self.JJ) for i, j in zip(i_idx, j_idx)}
             self.s_treeList = [
                 t for t in self.s_treeList
                 if (t.get("rootcell_i"), t.get("rootcell_j")) not in blocked_cells
@@ -2067,15 +1984,10 @@ class Worker(QObject):
 
         # check buildings need to be removed e.g. building height = 0 or < 0
         QgsMessageLog.logMessage("Check integrity of Buildings...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        bRemSet02 = set(())
-        for i in range(bTop_int_array.shape[0]):
-            for j in range(bTop_int_array.shape[1]):
-                if bTop_int_array[i, j] <= 0 or bBot_int_array[i, j] >= bTop_int_array[i, j]:
-                    # remove building in 2d
-                    bTop_int_array[i, j] = 0
-                    bBot_int_array[i, j] = 0
-                    bRemSet02.add(bNumber_int_array[i, j])
-                    bNumber_int_array[i, j] = 0
+        invalid = (bTop_int_array <= 0) | (bBot_int_array >= bTop_int_array)
+        bRemSet02 = set(np.unique(bNumber_int_array[invalid]).tolist())
+        for array in (bFixHeight_int_array, bTop_int_array, bBot_int_array, bNumber_int_array):
+            array[invalid] = 0
 
         # now update bList — drop buildings that no longer have any cells
         remaining_buildings = set(np.unique(bNumber_int_array).tolist())
@@ -2086,206 +1998,51 @@ class Worker(QObject):
         self.progress.emit(80)
         QgsMessageLog.logMessage("Converting Data to ENVI-met model area...", 'ENVI-met', level=Qgis.MessageLevel.Info)
 
-        # finally convert to matrix
-        bTop_str_matrix = np.array2string(bTop_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bTop_str_matrix = bTop_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        bBot_str_matrix = np.array2string(bBot_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bBot_str_matrix = bBot_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        bNumber_str_matrix = np.array2string(bNumber_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bNumber_str_matrix = bNumber_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        bFixHeight_str_matrix = np.array2string(bFixHeight_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        bFixHeight_str_matrix = bFixHeight_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        # terrain
-        dem_str_matrix = np.array2string(dem_int_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        dem_str_matrix = dem_str_matrix.replace(" ", "").replace("[", "").replace("]", "")
-
-        # plants
-        simplePlant_str_matrix = np.array2string(simplePlant_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        simplePlant_str_matrix = simplePlant_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'", "").replace("NULL", "")
-
-        # surfaces
-        surf_str_matrix = np.array2string(surf_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        surf_str_matrix = surf_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'", "").replace("NULL", "")
-
-        # sources
-        src_str_matrix = np.array2string(src_str_array, max_line_width=sys.maxsize, separator=",", threshold=sys.maxsize)
-        src_str_matrix = src_str_matrix.replace(" ", "").replace("[", "").replace("]", "").replace("'", "").replace("NULL", "")
+        # finally the model area, in the JSON format of ENVI-met 6 (core.inx)
+        model = inx.new_model(self.II, self.JJ)
+        model['header'].update(
+            fileInfo='Created with geodata2ENVI-met (QGIS)', description='generated by geodata2ENVI-met',
+            remark="model created by QGIS plugin, additional settings: def roof material: " + self.defaultRoof +
+                   "; def wall material: " + self.defaultWall + "; clear buildings cells at border: " +
+                   str(self.removeBBorder) + "; leveled buildings in DEM: " + str(self.bLeveled) +
+                   "; building height not fixed: " + str(self.bNOTFixedH) + "; starting surface: " +
+                   self.startSurfID + "; remove veg from buildings: " + str(self.removeVegBuild))
+        model['geometry'].update(k=self.KK, dx=self.dx, dy=self.dy, dz=self.dz, useSplitting=bool(self.useSplitting),
+                                 useTelescoping=bool(self.useTelescoping), verticalStretch=self.teleStretch,
+                                 startStretch=self.teleStart)
+        model['nesting'].update(nestingGrids=0, soilProfileA='0200LO', soilProfileB='0200LO')
+        model['location'].update(name='data export from QGIS', modelRot=-self.model_rot, lon=self.lon, lat=self.lat,
+                                 epsgProj=self.subAreaLayer.crs().authid(), x=self.subAreaExtent.xMinimum(),
+                                 y=self.subAreaExtent.yMinimum(), timezoneUTC=timeZone,
+                                 timezoneLon=self.timeZoneLonRef)
+        model['defaults'].update(commonWall=self.defaultWall, commonRoof=self.defaultRoof)
+        model['surrounding'].update(surrounding.section(self.useSurroundingArea, self.surroundingBorders))
+        # the altitude of the terrain's lowest cell; without a DEM that of the location
+        has_dem = not (self.dEMLayer.name() == "notAvail") and not (self.dEMBand <= 0)
+        if has_dem or self.elevation is None or float(self.elevation) == C_NODATA_VALUE:
+            model['refAlt'] = self.refHeightDEM
+        else:
+            model['refAlt'] = float(self.elevation)
+        model['grids'].update(top=bTop_int_array, bot=bBot_int_array, no=bNumber_int_array,
+                              fixedHeight=bFixHeight_int_array > 0, terrain=dem_int_array,
+                              simplePlants=simplePlant_str_array, soilProfiles=surf_str_array, sources=src_str_array)
+        for bld in self.s_buildingDict.values():
+            building = dict(no=int(bld.BuildingInternalNumber), name=str(bld.BuildingName),
+                            wall=bld.BuildingWallMaterial, roof=bld.BuildingRoofMaterial,
+                            wallGreen=bld.BuildingFacadeGreening, roofGreen=bld.BuildingRoofGreening,
+                            bps=str(bld.BuildingBPS) == '1')
+            building.update(indoor.building_values(bld.indoor, self.bSuppressACHeat))
+            model['buildings'].append(building)
+        # 3D plant root cells are 1-based, receptor cells 0-based; see core.grid
+        model['plants3d'] = [dict(i=tree.get("rootcell_i"), j=tree.get("rootcell_j"), k=tree.get("rootcell_k"),
+                                  id=tree.get("plantID"), name=tree.get("name"), obs=str(tree.get("observe")) == '1')
+                             for tree in self.s_treeList]
+        model['receptors'] = [dict(i=rec.get("cell_i"), j=rec.get("cell_j"), name=rec.get("name"))
+                              for rec in self.s_recList]
 
         self.progress.emit(90)
         QgsMessageLog.logMessage("Writing file...", 'ENVI-met', level=Qgis.MessageLevel.Info)
-        with open(self.filename, 'w', encoding='utf-8') as output_file:
-            # Print functions
-            print("<ENVI-MET_Datafile>", file=output_file)
-            print("  <Header>", file=output_file)
-            print("    <filetype>INPX ENVI-met Area Input File</filetype>", file=output_file)
-            print("    <version>4</version>", file=output_file)
-            print("    <revisiondate>  </revisiondate>", file=output_file)
-            print("    <remark> model created by QGIS plugin, additional settings: def roof material: " + self.defaultWall + "; def wall material: " + self.defaultRoof + "; clear buildings cells at border: " + str(self.removeBBorder) + "; leveled buildings in DEM: " + str(self.bLeveled) + "; building height not fixed: " + str(self.bNOTFixedH) + "; starting surface: " + self.startSurfID + "; remove veg from buildings: " + str(self.removeVegBuild) + " </remark>", file=output_file)
-            print("    <fileInfo> model created by QGIS plugin </fileInfo>", file=output_file)
-            print("    <encryptionlevel>0</encryptionlevel>", file=output_file)
-            print("  </Header>", file=output_file)
-            print("  <baseData>", file=output_file)
-            print("    <modelDescription> generated by geodata2ENVI-met </modelDescription>", file=output_file)
-            print("    <modelAuthor>  </modelAuthor>", file=output_file)
-            print("  </baseData>", file=output_file)
-            print("  <modelGeometry>", file=output_file)
-            print("    <grids-I> " + str(self.II) + " </grids-I>", file=output_file)
-            print("    <grids-J> " + str(self.JJ) + " </grids-J>", file=output_file)
-            print("    <grids-Z> " + str(self.KK) + " </grids-Z>", file=output_file)
-            print("    <dx> " + str(self.dx) + " </dx>", file=output_file)
-            print("    <dy> " + str(self.dy) + " </dy>", file=output_file)
-            print("    <dz-base> " + str(self.dz) + " </dz-base>", file=output_file)
-            if self.useTelescoping:
-                print("    <useTelescoping_grid> 1 </useTelescoping_grid>", file=output_file)
-            else:
-                print("    <useTelescoping_grid> 0 </useTelescoping_grid>", file=output_file)
-            if self.useSplitting:
-                print("    <useSplitting> 1 </useSplitting>", file=output_file)
-            else:
-                print("    <useSplitting> 0 </useSplitting>", file=output_file)
-            print("    <verticalStretch> " + str(self.teleStretch) + " </verticalStretch>", file=output_file)
-            print("    <startStretch> " + str(self.teleStart) + " </startStretch>", file=output_file)
-            print("    <has3DModel> 1 </has3DModel>", file=output_file)
-            print("    <isFull3DDesign> 0 </isFull3DDesign>", file=output_file)
-            print("  </modelGeometry>", file=output_file)
-
-            print("  <nestingArea>", file=output_file)
-            print("    <numberNestinggrids> 0 </numberNestinggrids>", file=output_file)
-            print("    <soilProfileA> 0200LO </soilProfileA>", file=output_file)
-            print("    <soilProfileB> 0200LO </soilProfileB>", file=output_file)
-            print("  </nestingArea>", file=output_file)
-
-            print("  <locationData>", file=output_file)
-            print("    <modelRotation> " + str(-self.model_rot) + " </modelRotation>", file=output_file)
-            print("    <projectionSystem> " + str(self.subAreaLayer.crs().authid()) + " </projectionSystem>", file=output_file)
-            print("    <UTMZone> " + str(self.UTMZone) + " </UTMZone>", file=output_file)
-            print("    <realworldLowerLeft_X> " + str(self.subAreaExtent.xMinimum()) + " </realworldLowerLeft_X>",
-                  file=output_file)
-            print("    <realworldLowerLeft_Y> " + str(self.subAreaExtent.yMinimum()) + " </realworldLowerLeft_Y>",
-                  file=output_file)
-            print("    <locationName> data export from QGIS </locationName>", file=output_file)
-            print("    <location_Longitude> " + str(self.lon) + " </location_Longitude>", file=output_file)
-            print("    <location_Latitude> " + str(self.lat) + " </location_Latitude>", file=output_file)
-            print("    <locationTimeZone_Name> " + self.timeZoneName + " </locationTimeZone_Name>", file=output_file)
-            print("    <locationTimeZone_Longitude> " + str(self.timeZoneLonRef) + " </locationTimeZone_Longitude>",
-                  file=output_file)
-            print("    <elevation> " + str(self.elevation) + " </elevation>", file=output_file)
-            print("  </locationData>", file=output_file)
-
-            print("  <defaultSettings>", file=output_file)
-            print("    <commonWallMaterial> " + self.defaultWall + "</commonWallMaterial>", file=output_file)
-            print("    <commonRoofMaterial> " + self.defaultRoof + "</commonRoofMaterial>", file=output_file)
-            print("  </defaultSettings>", file=output_file)
-
-            print("  <buildings2D>", file=output_file)
-            print("    <zTop type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">",
-                  file=output_file)
-            print(bTop_str_matrix, file=output_file)
-            print("     </zTop>", file=output_file)
-            print("     <zBottom type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">",
-                  file=output_file)
-            print(bBot_str_matrix, file=output_file)
-            print("     </zBottom>", file=output_file)
-            print(
-                "     <buildingNr type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">",
-                file=output_file)
-            print(bNumber_str_matrix, file=output_file)
-            print("     </buildingNr>", file=output_file)
-            print(
-                "     <fixedheight type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">",
-                file=output_file)
-            print(bFixHeight_str_matrix, file=output_file)
-            print("     </fixedheight>", file=output_file)
-            print("  </buildings2D>", file=output_file)
-
-            for key in self.s_buildingDict.keys():
-                bld = self.s_buildingDict[key]
-                print("  <Buildinginfo>", file=output_file)
-                print("    <BuildingInternalNr> " + str(bld.BuildingInternalNumber) + " </BuildingInternalNr>",
-                      file=output_file)
-                print("    <BuildingName> " + bld.BuildingName + " </BuildingName>", file=output_file)
-                print("    <BuildingWallMaterial> " + bld.BuildingWallMaterial + " </BuildingWallMaterial>",
-                      file=output_file)
-                print("    <BuildingRoofMaterial> " + bld.BuildingRoofMaterial + " </BuildingRoofMaterial>",
-                      file=output_file)
-                print("    <BuildingFacadeGreening> " + bld.BuildingFacadeGreening + " </BuildingFacadeGreening>",
-                      file=output_file)
-                print("    <BuildingRoofGreening> " + bld.BuildingRoofGreening + " </BuildingRoofGreening>",
-                      file=output_file)
-                print("    <ObserveBPS> " + bld.BuildingBPS + " </ObserveBPS>",
-                      file=output_file)
-                print("  </Buildinginfo>", file=output_file)
-
-            print("  <simpleplants2D>", file=output_file)
-            print(
-                "     <ID_plants1D type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">",
-                file=output_file)
-            print(simplePlant_str_matrix, file=output_file)
-            print("  </simpleplants2D>", file=output_file)
-
-            for tree in self.s_treeList:
-                print("  <3Dplants>", file=output_file)
-                print("    <rootcell_i> " + str(tree.get("rootcell_i") + 1) + " </rootcell_i>",
-                      file=output_file)  # the index is + 1 in envimet
-                print("    <rootcell_j> " + str(tree.get("rootcell_j")) + " </rootcell_j>",
-                      file=output_file)  # this index is correct in envimet
-                print("    <rootcell_k> " + str(tree.get("rootcell_k")) + " </rootcell_k>", file=output_file)
-                print("    <plantID> " + tree.get("plantID") + " </plantID>", file=output_file)
-                print("    <name> " + tree.get("name") + " </name>", file=output_file)
-                print("    <observe> " + str(tree.get("observe")) + " </observe>", file=output_file)
-                print("  </3Dplants>", file=output_file)
-
-            print("  <soils2D>", file=output_file)
-            print("     <ID_soilprofile type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">", file=output_file)
-            print(surf_str_matrix, file=output_file)
-            print("     </ID_soilprofile>", file=output_file)
-            print("  </soils2D>", file=output_file)
-
-            print("  <dem>", file=output_file)
-            print("     <DEMReference> " + str(self.refHeightDEM) + " </DEMReference>", file=output_file)
-            print("     <terrainheight type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(
-                self.JJ) + "\">", file=output_file)
-            print(dem_str_matrix, file=output_file)
-            print("     </terrainheight>", file=output_file)
-            print("  </dem>", file=output_file)
-            print("  <sources2D>", file=output_file)
-            print("     <ID_sources type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">", file=output_file)
-            print(src_str_matrix, file=output_file)
-            print("     </ID_sources>", file=output_file)
-            print("  </sources2D>", file=output_file)
-
-            for rec in self.s_recList:
-                print("  <Receptors>", file=output_file)
-                print("    <cell_i> " + str(rec.get("cell_i") + 1) + " </cell_i>", file=output_file)  # the index is + 1 in envimet
-                print("    <cell_j> " + str(rec.get("cell_j")) + " </cell_j>", file=output_file)  # this index is correct in envimet
-                print("    <name> " + rec.get("name") + " </name>", file=output_file)
-                print("  </Receptors>", file=output_file)
-
-            """
-            # print("  <receptors2D>", file = output_file)
-            # print("     <ID_receptors type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">", file = output_file)
-            # print(rec_str_matrix, file = output_file)
-            # print("     </ID_receptors>", file = output_file)
-            # print("  </receptors2D>", file = output_file)
-            # print("  <additionalData>", file = output_file)
-            # print("     <db_link_point type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">", file = output_file)
-            # print(dbPoint_str_matrix.replace("1", "").replace("2", "").replace("3", "").replace("4", "").replace("5", "").replace("6", "").replace("7", "").replace("8", "").replace("9", "").replace("0","").replace(" ","").replace("[","").replace("]",""), file = output_file)
-            # print("     </db_link_point>", file = output_file)
-            # print("     <db_link_area type=\"matrix-data\" dataI=\"" + str(self.II) + "\" dataJ=\"" + str(self.JJ) + "\">", file = output_file)
-            # print(dbArea_str_matrix.replace("1", "").replace("2", "").replace("3", "").replace("4", "").replace("5", "").replace("6", "").replace("7", "").replace("8", "").replace("9", "").replace("0","").replace(" ","").replace("[","").replace("]",""), file = output_file)
-            # print("     </db_link_area>", file = output_file)
-            # print("  </additionalData>", file = output_file)
-            # print("  <modelGeometry3D>", file = output_file)
-            # print("     <grids3D-I> " + str(self.II) + " </grids3D-I>", file = output_file)
-            # print("     <grids3D-J> " + str(self.JJ) + " </grids3D-J>", file = output_file)
-            # print("     <grids3D-K> " + str(self.KK3d) + " </grids3D-K>", file = output_file)
-            # print("  </modelGeometry3D>", file = output_file)
-            """
-            print("</ENVI-MET_Datafile>", file=output_file)
+        inx.write(self.filename, model)
 
         self.progress.emit(100)
         QgsMessageLog.logMessage("--- Finished Exporting INX-File ---", 'ENVI-met', level=Qgis.MessageLevel.Info)
@@ -2436,987 +2193,6 @@ class Worker(QObject):
 
     def stop(self):
         self.stopworker = True
-
-    # ENVI-met stores temperatures in Kelvin; the UI works in degrees Celsius.
-    # The 273.14999 offset is kept exactly as the original code used it.
-    # ==================================================================
-    # SIMX (simulation config) load/save
-    # ==================================================================
-    @staticmethod
-    def _k_to_c(kelvin):
-        return kelvin - 273.14999
-
-    @staticmethod
-    def _c_to_k(celsius):
-        return celsius + 273.14999
-
-    def load_simx(self, ui, filepath):
-        simx = SIMX()
-        simx.load_simx(file_path=filepath)
-
-        # update UI
-        # General settings
-        start_date = simx.mainData.startDate
-        ui.lb_selectedDateSim.setText(start_date)
-        y = int(start_date.split('.')[2])
-        m = int(start_date.split('.')[1])
-        d = int(start_date.split('.')[0])
-        ui.calendar_startDateSim.setSelectedDate(QDate(y, m, d))
-        start_time = simx.mainData.startTime
-        start_time = start_time.rsplit(':', 1)[0]
-        h = int(start_time.split(':')[0])
-        m = int(start_time.split(':')[1])
-        ui.te_startTimeSim.setTime(QTime(h, m))
-        ui.sb_simDur.setValue(int(simx.mainData.simDuration))
-        ui.le_fullSimName.setText(simx.mainData.simName)
-        ui.le_outputFolderSim.setText(simx.mainData.outDir)
-        ui.le_inxForSim.setText(simx.mainData.INXfile)
-
-        if simx.Parallel.CPUdemand == 'ALL':
-            ui.rb_multiCore.setChecked(True)
-        else:
-            ui.rb_singleCore.setChecked(True)
-
-        # meteo settings
-        if simx.SiFoSelected:
-            ui.rb_simpleForcing.setChecked(True)
-            # find min/max values for hum. and temp.
-            t_max = -999
-            t_min = 999
-            h_max = -999
-            h_min = 999
-            t_max_time = -1
-            t_min_time = -1
-            h_max_time = -1
-            h_min_time = -1
-            for i in range(len(simx.SimpleForcing.TAir)):
-                if simx.SimpleForcing.TAir[i] < t_min:
-                    t_min = simx.SimpleForcing.TAir[i]
-                    t_min_time = i
-                if simx.SimpleForcing.TAir[i] > t_max:
-                    t_max = simx.SimpleForcing.TAir[i]
-                    t_max_time = i
-                if simx.SimpleForcing.Qrel[i] < h_min:
-                    h_min = simx.SimpleForcing.Qrel[i]
-                    h_min_time = i
-                if simx.SimpleForcing.Qrel[i] > h_max:
-                    h_max = simx.SimpleForcing.Qrel[i]
-                    h_max_time = i
-            t_min = self._k_to_c(t_min)
-            t_max = self._k_to_c(t_max)
-            ui.sb_timeMaxT.setValue(t_max_time)
-            ui.sb_timeMinT.setValue(t_min_time)
-            ui.sb_timeMaxHum.setValue(h_max_time)
-            ui.sb_timeMinHum.setValue(h_min_time)
-            ui.hs_maxT.setValue(round(t_max))
-            ui.hs_minT.setValue(round(t_min))
-            ui.hs_maxHum.setValue(round(h_max))
-            ui.hs_minHum.setValue(round(h_min))
-            # set other SiFo-Values
-            ui.sb_specHum.setValue(simx.mainData.Q_H)
-            ui.sb_windspeed.setValue(simx.mainData.windSpeed)
-            ui.sb_winddir.setValue(simx.mainData.windDir)
-            ui.sb_rlength.setValue(simx.mainData.z0)
-            ui.sb_lowclouds.setValue(simx.Clouds.lowClouds)
-            ui.sb_midclouds.setValue(simx.Clouds.middleClouds)
-            ui.sb_highclouds.setValue(simx.Clouds.highClouds)
-
-        elif simx.FuFoSelected:
-            ui.rb_fullForcing.setChecked(True)
-            ui.le_selectedFOX.setText(simx.FullForcing.fileName)
-            if simx.FullForcing.forceWind == 1:
-                ui.rb_forceWind_yes.setChecked(True)
-            else:
-                ui.rb_forceWind_no.setChecked(True)
-                ui.sb_constWS_FUFo.setValue(simx.mainData.windSpeed)
-                ui.sb_constWD_FuFo.setValue(simx.mainData.windDir)
-                ui.sb_rlength_FuFo.setValue(simx.mainData.z0)
-
-            if simx.FullForcing.forceT == 1:
-                ui.rb_forceT_yes.setChecked(True)
-            else:
-                ui.rb_forceT_no.setChecked(True)
-                ui.sb_initT.setValue(self._k_to_c(simx.mainData.T_H))
-
-            if simx.FullForcing.forceRadClouds == 1:
-                ui.rb_forceRadC_yes.setChecked(True)
-            else:
-                ui.rb_forceRadC_no.setChecked(True)
-                ui.sb_lowclouds_2.setValue(simx.Clouds.lowClouds)
-                ui.sb_mediumclouds.setValue(simx.Clouds.middleClouds)
-                ui.sb_highclouds_2.setValue(simx.Clouds.highClouds)
-
-            if simx.FullForcing.forceQ == 1:
-                ui.rb_forceHum_yes.setChecked(True)
-            else:
-                ui.rb_forceHum_no.setChecked(True)
-                ui.sb_relHum.setValue(simx.mainData.Q_2m)
-                ui.sb_specHum_2.setValue(simx.mainData.Q_H)
-
-            if simx.FullForcing.forcePrecip == 1:
-                ui.rb_forcePrec_yes.setChecked(True)
-            else:
-                ui.rb_forcePrec_no.setChecked(True)
-        else:
-            # simx.otherSelected
-            ui.rb_other.setChecked(True)
-            ui.sb_otherAirT.setValue(self._k_to_c(simx.mainData.T_H))
-            ui.sb_otherHum.setValue(simx.mainData.Q_2m)
-            ui.sb_otherHum2500.setValue(simx.mainData.Q_H)
-            ui.sb_otherWS.setValue(simx.mainData.windSpeed)
-            ui.sb_otherWdir.setValue(simx.mainData.windDir)
-            ui.sb_otherRlength.setValue(simx.mainData.z0)
-            ui.sb_otherLowclouds.setValue(simx.Clouds.lowClouds)
-            ui.sb_otherMediumclouds.setValue(simx.Clouds.middleClouds)
-            ui.sb_otherHighclouds.setValue(simx.Clouds.highClouds)
-            if simx.LBC.LBC_TQ == 1:
-                ui.cb_otherBChumT.setCurrentIndex(0)
-            else:
-                # LVC_TQ == 3
-                ui.cb_otherBChumT.setCurrentIndex(1)
-            if simx.LBC.LBC_TKE == 1:
-                ui.cb_otherBCturb.setCurrentIndex(0)
-            else:
-                # LBC_TKE == 3
-                ui.cb_otherBCturb.setCurrentIndex(1)
-
-        # optional sections
-        if simx.SoilSelected:
-            ui.chk_soilSim.setCheckState(Qt.CheckState.Checked)
-            ui.sb_soilHumUpper.setValue(simx.Soil.waterUpperlayer)
-            ui.sb_soilHumMiddle.setValue(simx.Soil.waterMiddlelayer)
-            ui.sb_soilHumLower.setValue(simx.Soil.waterDeeplayer)
-            ui.sb_soilHumBedrock.setValue(simx.Soil.waterBedrocklayer)
-            ui.sb_soilTupper.setValue(self._k_to_c(simx.Soil.tempUpperlayer))
-            ui.sb_soilTmiddle.setValue(self._k_to_c(simx.Soil.tempMiddlelayer))
-            ui.sb_soilTlower.setValue(self._k_to_c(simx.Soil.tempDeeplayer))
-            ui.sb_soilTbedrock.setValue(self._k_to_c(simx.Soil.tempBedrocklayer))
-        if simx.RadiationSelected:
-            ui.chk_radiationSim.setCheckState(Qt.CheckState.Checked)
-
-            if (simx.RadScheme.RayTraceStepWidthHighRes >= 0.5) and (simx.RadScheme.RayTraceStepWidthLowRes >= 0.75):
-                ui.rb_lowRes.setChecked(True)
-            else:
-                ui.rb_fineRes.setChecked(True)
-
-            if simx.RadScheme.RadiationHeightBoundary < 0.0:
-                ui.rb_noHeightCap.setChecked(True)
-            else:
-                ui.rb_yesHeightCap.setChecked(True)
-                ui.sb_heightCap.setValue(round(simx.RadScheme.RadiationHeightBoundary))
-
-            if simx.RadScheme.IVSHeightAngle_HiRes == -1:
-                ui.rb_useIVSno.setChecked(True)
-            else:
-                ui.rb_useIVSyes.setChecked(True)
-                if simx.RadScheme.IVSHeightAngle_HiRes == 45:
-                    ui.cb_resHeightIVS.setCurrentIndex(0)
-                elif simx.RadScheme.IVSHeightAngle_HiRes == 30:
-                    ui.cb_resHeightIVS.setCurrentIndex(1)
-                elif simx.RadScheme.IVSHeightAngle_HiRes == 15:
-                    ui.cb_resHeightIVS.setCurrentIndex(2)
-                elif simx.RadScheme.IVSHeightAngle_HiRes == 10:
-                    ui.cb_resHeightIVS.setCurrentIndex(3)
-                elif simx.RadScheme.IVSHeightAngle_HiRes == 5:
-                    ui.cb_resHeightIVS.setCurrentIndex(4)
-                elif simx.RadScheme.IVSHeightAngle_HiRes == 2:
-                    ui.cb_resHeightIVS.setCurrentIndex(5)
-
-                if simx.RadScheme.IVSAziAngle_HiRes == 45:
-                    ui.cb_resAziIVS.setCurrentIndex(0)
-                elif simx.RadScheme.IVSAziAngle_HiRes == 30:
-                    ui.cb_resAziIVS.setCurrentIndex(1)
-                elif simx.RadScheme.IVSAziAngle_HiRes == 15:
-                    ui.cb_resAziIVS.setCurrentIndex(2)
-                elif simx.RadScheme.IVSAziAngle_HiRes == 10:
-                    ui.cb_resAziIVS.setCurrentIndex(3)
-                elif simx.RadScheme.IVSAziAngle_HiRes == 5:
-                    ui.cb_resAziIVS.setCurrentIndex(4)
-                elif simx.RadScheme.IVSAziAngle_HiRes == 2:
-                    ui.cb_resAziIVS.setCurrentIndex(5)
-
-                if simx.RadScheme.MRTCalcMethod == 0:
-                    ui.rb_MRT1.setChecked(True)
-                else:
-                    ui.rb_MRT2.setChecked(True)
-
-                if simx.RadScheme.MRTProjFac == 3:
-                    ui.cb_humanProjFac.setCurrentIndex(3)
-                elif simx.RadScheme.MRTProjFac == 2:
-                    ui.cb_humanProjFac.setCurrentIndex(2)
-                elif simx.RadScheme.MRTProjFac == 1:
-                    ui.cb_humanProjFac.setCurrentIndex(1)
-                else:
-                    ui.cb_humanProjFac.setCurrentIndex(0)
-
-                if simx.RadScheme.AdvCanopyRadTransfer == 1:
-                    ui.rbACRTyes.setChecked(True)
-                else:
-                    ui.rb_ACRTno.setChecked(True)
-
-                ui.sb_ACRTdays.setValue(simx.RadScheme.ViewFacUpdateInterval)
-                ui.sb_adjustFac.setValue(simx.SolarAdjust.SWFactor)
-
-        if simx.BuildingSelected:
-            ui.chk_buildingsSim.setCheckState(Qt.CheckState.Checked)
-            ui.sb_bldTmp.setValue(self._k_to_c(simx.Building.indoorTemp))
-            ui.sb_bldSurfTmp.setValue(self._k_to_c(simx.Building.surfTemp))
-            if simx.Building.indoorConst == 1:
-                ui.rb_indoorYes.setChecked(True)
-            else:
-                ui.rb_indoorNo.setChecked(True)
-        if simx.PollutantsSelected:
-            ui.chk_pollutantsSim.setCheckState(Qt.CheckState.Checked)
-            ui.sb_NO.setValue(simx.Background.NO)
-            ui.sb_NO2.setValue(simx.Background.NO2)
-            ui.sb_ozone.setValue(simx.Background.O3)
-            ui.sb_PM10.setValue(simx.Background.PM_10)
-            ui.sb_PM25.setValue(simx.Background.PM_2_5)
-            ui.sb_userPollu.setValue(simx.Background.userSpec)
-            ui.le_userPolluName.setText(simx.Sources.userPolluName)
-            ui.cb_userPolluType.setCurrentIndex(simx.Sources.userPolluType)
-            ui.sb_praticleDia.setValue(simx.Sources.userPartDiameter)
-            ui.sb_particleDens.setValue(simx.Sources.userPartDensity)
-
-        if simx.OutputSelected:
-            ui.chk_outputSim.setCheckState(Qt.CheckState.Checked)
-
-            if simx.OutputSettings.writeBuildings == 1:
-                ui.cb_outputBldData.setCheckState(Qt.CheckState.Checked)
-            else:
-                ui.cb_outputBldData.setCheckState(Qt.CheckState.Unchecked)
-
-            if simx.OutputSettings.writeRadiation == 1:
-                ui.cb_outputRadData.setCheckState(Qt.CheckState.Checked)
-            else:
-                ui.cb_outputRadData.setCheckState(Qt.CheckState.Unchecked)
-
-            if simx.OutputSettings.writeSoil == 1:
-                ui.cb_outputSoilData.setCheckState(Qt.CheckState.Checked)
-            else:
-                ui.cb_outputSoilData.setCheckState(Qt.CheckState.Unchecked)
-
-            if simx.OutputSettings.writeVegetation == 1:
-                ui.cb_outputVegData.setCheckState(Qt.CheckState.Checked)
-            else:
-                ui.cb_outputVegData.setCheckState(Qt.CheckState.Unchecked)
-
-            ui.sb_outputIntRecBld.setValue(simx.OutputSettings.textFiles)
-            ui.sb_outputIntOther.setValue(simx.OutputSettings.mainFiles)
-
-            if simx.OutputSettings.netCDF == 1:
-                ui.rb_writeNetCDFyes.setChecked(True)
-            else:
-                ui.rb_writeNetCDFNo.setChecked(True)
-
-        if simx.ExpertSelected:
-            ui.chk_expertSim.setCheckState(Qt.CheckState.Checked)
-
-            ui.cb_TKE.setCurrentIndex(simx.Turbulence.turbulenceModel)
-
-            if (simx.Turbulence.TKELimit == 1):
-                ui.rb_tkeLimitY.setChecked(True)
-            else:
-                ui.rb_tkeLimitN.setChecked(True)
-
-            if (simx.TThread.UseTThread_CallMain == 0):
-                ui.rb_threadingMain.setChecked(True)
-            else:
-                ui.rb_threadingOwn.setChecked(True)
-
-            if simx.InflowAvg.inflowAvg == 0:
-                ui.rb_avgInflowYes.setChecked(True)
-            else:
-                ui.rb_avgInflowNo.setChecked(True)
-
-            if simx.Facades.FacadeMode == 1:
-                ui.rb_DIN6946.setChecked(True)
-            else:
-                ui.rb_MO.setChecked(True)
-
-            if simx.SOR.SORMode == 1:
-                ui.rb_newSOR.setChecked(True)
-            else:
-                ui.rb_oldSOR.setChecked(True)
-        if simx.PlantsSelected:
-            ui.chk_plantsSim.setCheckState(Qt.CheckState.Checked)
-
-            ui.sb_co2.setValue(simx.PlantModel.CO2BackgroundPPM)
-            if simx.PlantModel.LeafTransmittance == 1:
-                ui.rb_leafTransUserDef.setChecked(True)
-            else:
-                ui.rb_leafTransOldCalc.setChecked(True)
-
-            if simx.PlantModel.TreeCalendar == 1:
-                ui.rb_TreeCalYes.setChecked(True)
-            else:
-                ui.rb_TreeCalNo.setChecked(True)
-        self.finished.emit()
-
-    def save_simx(self, ui):
-        simx = SIMX()
-
-        # write values from UI into the simx-object
-        # write general-settings
-        simx.mainData.simName = ui.le_fullSimName.text()
-        simx.mainData.filebaseName = ui.le_fullSimName.text()
-        simx.mainData.outDir = ui.le_outputFolderSim.text()
-        simx.mainData.INXfile = ui.le_inxForSim.text()
-        simx.mainData.startDate = ui.lb_selectedDateSim.text()
-        simx.mainData.simDuration = ui.sb_simDur.value()
-
-        qtime = ui.te_startTimeSim.time()
-        h = qtime.hour()
-        m = qtime.minute()
-        if h < 10:
-            if m < 10:
-                simx.mainData.startTime = f'0{h}:0{m}:00'
-            else:
-                simx.mainData.startTime = f'0{h}:{m}:00'
-        else:
-            if m < 10:
-                simx.mainData.startTime = f'{h}:0{m}:00'
-            else:
-                simx.mainData.startTime = f'{h}:{m}:00'
-
-        # write Parallel-settings
-        if ui.rb_multiCore.isChecked():
-            simx.Parallel.CPUdemand = 'ALL'
-        else:
-            simx.Parallel.CPUdemand = '1'
-        # write meteo-settings
-        if ui.rb_simpleForcing.isChecked():
-            simx.SiFoSelected = True
-
-            # Clouds
-            simx.Clouds.lowClouds = ui.sb_lowclouds.value()
-            simx.Clouds.middleClouds = ui.sb_midclouds.value()
-            simx.Clouds.highClouds = ui.sb_highclouds.value()
-            # Wind and Radiation
-            simx.mainData.windSpeed = ui.sb_windspeed.value()
-            simx.mainData.windDir = ui.sb_winddir.value()
-            simx.mainData.z0 = ui.sb_rlength.value()
-            simx.mainData.Q_H = ui.sb_specHum.value()
-
-            # temperature and humidity values
-            for i in range(24):
-                simx.SimpleForcing.TAir[i] = self._c_to_k(float(ui.tableWidget.item(i, 0).text()))
-                simx.SimpleForcing.Qrel[i] = float(ui.tableWidget.item(i, 1).text())
-
-        elif ui.rb_fullForcing.isChecked():
-            simx.FuFoSelected = True
-
-            simx.FullForcing.fileName = ui.le_selectedFOX.text()
-            if ui.rb_forceT_yes.isChecked():
-                simx.FullForcing.forceT = 1
-            else:
-                simx.FullForcing.forceT = 0
-                simx.mainData.T_H = self._c_to_k(ui.sb_initT.value())
-
-            if ui.rb_forceWind_yes.isChecked():
-                simx.FullForcing.forceWind = 1
-            else:
-                simx.FullForcing.forceWind = 0
-                simx.mainData.windSpeed = ui.sb_constWS_FUFo.value()
-                simx.mainData.windDir = ui.sb_constWD_FuFo.value()
-                simx.mainData.z0 = ui.sb_rlength_FuFo.value()
-
-            if ui.rb_forceRadC_yes.isChecked():
-                simx.FullForcing.forceRadClouds = 1
-            else:
-                simx.FullForcing.forceRadClouds = 0
-                simx.Clouds.lowClouds = ui.sb_lowclouds_2.value()
-                simx.Clouds.middleClouds = ui.sb_mediumclouds.value()
-                simx.Clouds.highClouds = ui.sb_highclouds_2.value()
-
-            if ui.rb_forceHum_yes.isChecked():
-                simx.FullForcing.forceQ = 1
-            else:
-                simx.FullForcing.forceQ = 0
-                simx.mainData.Q_H = ui.sb_specHum_2.value()
-                simx.mainData.Q_2m = ui.sb_relHum.value()
-
-            if ui.rb_forcePrec_yes.isChecked():
-                simx.FullForcing.forcePrecip = 1
-            else:
-                simx.FullForcing.forcePrecip = 0
-
-        elif ui.rb_other.isChecked():
-            simx.otherSelected = True
-
-            if ui.cb_otherBChumT.currentIndex() == 0:
-                simx.LBC.LBC_TQ = 1
-            else:
-                simx.LBC.LBC_TQ = 3
-
-            if ui.cb_otherBCturb.currentIndex() == 0:
-                simx.LBC.LBC_TKE = 1
-            else:
-                simx.LBC.LBC_TKE = 3
-
-            simx.Clouds.lowClouds = ui.sb_otherLowclouds.value()
-            simx.Clouds.middleClouds = ui.sb_otherMediumclouds.value()
-            simx.Clouds.highClouds = ui.sb_otherHighclouds.value()
-            simx.mainData.T_H = self._c_to_k(ui.sb_otherAirT.value())
-            simx.mainData.Q_2m = ui.sb_otherHum.value()
-            simx.mainData.Q_H = ui.sb_otherHum2500.value()
-            simx.mainData.windSpeed = ui.sb_otherWS.value()
-            simx.mainData.windDir = ui.sb_otherWdir.value()
-            simx.mainData.z0 = ui.sb_otherRlength.value()
-
-        # write section-bools
-        if ui.chk_soilSim.isChecked():
-            simx.SoilSelected = True
-        if ui.chk_radiationSim.isChecked():
-            simx.RadiationSelected = True
-        if ui.chk_buildingsSim.isChecked():
-            simx.BuildingSelected = True
-        if ui.chk_pollutantsSim.isChecked():
-            simx.PollutantsSelected = True
-        if ui.chk_outputSim.isChecked():
-            simx.OutputSelected = True
-        if ui.chk_expertSim.isChecked():
-            simx.ExpertSelected = True
-
-        # write optional sections
-        if simx.SoilSelected:
-            simx.Soil.waterUpperlayer = ui.sb_soilHumUpper.value()
-            simx.Soil.waterMiddlelayer = ui.sb_soilHumMiddle.value()
-            simx.Soil.waterDeeplayer = ui.sb_soilHumLower.value()
-            simx.Soil.waterBedrocklayer = ui.sb_soilHumBedrock.value()
-            simx.Soil.tempUpperlayer = self._c_to_k(ui.sb_soilTupper.value())
-            simx.Soil.tempMiddlelayer = self._c_to_k(ui.sb_soilTmiddle.value())
-            simx.Soil.tempDeeplayer = self._c_to_k(ui.sb_soilTlower.value())
-            simx.Soil.tempBedrocklayer = self._c_to_k(ui.sb_soilTbedrock.value())
-        if simx.RadiationSelected:
-            simx.SolarAdjust.SWFactor = 1
-            simx.RadScheme.RayTraceStepWidthHighRes = 0.25
-            simx.RadScheme.RayTraceStepWidthLowRes = 0.50
-            simx.RadScheme.RadiationHeightBoundary = 10
-            simx.RadScheme.AdvCanopyRadTransfer = 1
-            simx.RadScheme.ViewFacUpdateInterval = 30
-
-            # IVS
-            if ui.cb_resIVS.currentIndex() == 0:
-                simx.RadScheme.IVSHeightAngle_HiRes = -1
-                simx.RadScheme.IVSHeightAngle_LoRes = -1
-                simx.RadScheme.IVSAziAngle_HiRes = -1
-                simx.RadScheme.IVSAziAngle_LoRes = -1
-            elif ui.cb_resIVS.currentIndex() == 1:
-                simx.RadScheme.IVSHeightAngle_HiRes = 30
-                simx.RadScheme.IVSHeightAngle_LoRes = 45
-                simx.RadScheme.IVSAziAngle_HiRes = 30
-                simx.RadScheme.IVSAziAngle_LoRes = 45
-            elif ui.cb_resIVS.currentIndex() == 2:
-                simx.RadScheme.IVSHeightAngle_HiRes = 15
-                simx.RadScheme.IVSHeightAngle_LoRes = 30
-                simx.RadScheme.IVSAziAngle_HiRes = 15
-                simx.RadScheme.IVSAziAngle_LoRes = 30
-            elif ui.cb_resIVS.currentIndex() == 3:
-                simx.RadScheme.IVSHeightAngle_HiRes = 15
-                simx.RadScheme.IVSHeightAngle_LoRes = 15
-                simx.RadScheme.IVSAziAngle_HiRes = 15
-                simx.RadScheme.IVSAziAngle_LoRes = 15
-            elif ui.cb_resIVS.currentIndex() == 4:
-                simx.RadScheme.IVSHeightAngle_HiRes = 10
-                simx.RadScheme.IVSHeightAngle_LoRes = 10
-                simx.RadScheme.IVSAziAngle_HiRes = 10
-                simx.RadScheme.IVSAziAngle_LoRes = 10
-            elif ui.cb_resIVS.currentIndex() == 5:
-                simx.RadScheme.IVSHeightAngle_HiRes = 5
-                simx.RadScheme.IVSHeightAngle_LoRes = 5
-                simx.RadScheme.IVSAziAngle_HiRes = 5
-                simx.RadScheme.IVSAziAngle_LoRes = 5
-            elif ui.cb_resIVS.currentIndex() == 6:
-                simx.RadScheme.IVSHeightAngle_HiRes = 2
-                simx.RadScheme.IVSHeightAngle_LoRes = 2
-                simx.RadScheme.IVSAziAngle_HiRes = 2
-                simx.RadScheme.IVSAziAngle_LoRes = 2
-
-            # MRT
-            simx.RadScheme.MRTCalcMethod = 1
-            simx.RadScheme.MRTProjFac = 2
-
-        if simx.BuildingSelected:
-            simx.Building.indoorTemp = self._c_to_k(ui.sb_bldTmp.value())
-            simx.Building.surfTemp = self._c_to_k(ui.sb_bldSurfTmp.value())
-            if ui.rb_indoorYes.isChecked():
-                simx.Building.indoorConst = 1
-            else:
-                simx.Building.indoorConst = 0
-
-        if simx.PollutantsSelected:
-            simx.Sources.multipleSources = 1
-            simx.Sources.activeChem = 1
-
-            simx.Sources.userPolluName = ui.le_userPolluName.text().strip()
-            simx.Sources.userPolluType = ui.cb_userPolluType.currentIndex()
-            simx.Sources.userPartDiameter = ui.sb_praticleDia.value()
-            simx.Sources.userPartDensity = ui.sb_particleDens.value()
-
-            simx.Background.NO = ui.sb_NO.value()
-            simx.Background.NO2 = ui.sb_NO2.value()
-            simx.Background.O3 = ui.sb_ozone.value()
-            simx.Background.PM_10 = ui.sb_PM10.value()
-            simx.Background.PM_2_5 = ui.sb_PM25.value()
-            simx.Background.userSpec = ui.sb_userPollu.value()
-
-        if simx.OutputSelected:
-            simx.OutputSettings.inclNestingGrids = 0
-
-            if ui.rb_writeNetCDFyes.isChecked():
-                simx.OutputSettings.netCDF = 1
-            else:
-                simx.OutputSettings.netCDF = 0
-
-            simx.OutputSettings.netCDFAllDataInOneFile = 1
-            simx.OutputSettings.netCDFWriteOnlySmallFile = 0
-
-            simx.OutputSettings.textFiles = ui.sb_outputIntRecBld.value()
-            simx.OutputSettings.mainFiles = ui.sb_outputIntOther.value()
-
-            if ui.cb_outputBldData.isChecked():
-                simx.OutputSettings.writeBuildings = 1
-            else:
-                simx.OutputSettings.writeBuildings = 0
-
-            if ui.cb_outputRadData.isChecked():
-                simx.OutputSettings.writeRadiation = 1
-            else:
-                simx.OutputSettings.writeRadiation = 0
-
-            if ui.cb_outputSoilData.isChecked():
-                simx.OutputSettings.writeSoil = 1
-            else:
-                simx.OutputSettings.writeSoil = 0
-
-            if ui.cb_outputVegData.isChecked():
-                simx.OutputSettings.writeVegetation = 1
-            else:
-                simx.OutputSettings.writeVegetation = 0
-
-        if simx.ExpertSelected:
-            simx.Turbulence.turbulenceModel = ui.cb_TKE.currentIndex()
-
-            if ui.rb_tkeLimitY.isChecked():
-                simx.Turbulence.TKELimit = 1
-            else:
-                simx.Turbulence.TKELimit = 0
-
-            if ui.rb_avgInflowYes.isChecked():
-                simx.InflowAvg.inflowAvg = 0
-            else:
-                simx.InflowAvg.inflowAvg = 1
-
-            if ui.rb_MO.isChecked():
-                simx.Facades.FacadeMode = 0
-            else:
-                simx.Facades.FacadeMode = 1
-
-            if ui.rb_oldSOR.isChecked():
-                simx.SOR.SORMode = 0
-            else:
-                simx.SOR.SORMode = 1
-
-            if ui.rb_threadingMain.isChecked():
-                simx.TThread.UseTThread_CallMain = 0
-            else:
-                simx.TThread.UseTThread_CallMain = 1
-        if simx.PlantsSelected:
-            simx.PlantModel.CO2BackgroundPPM = ui.sb_co2.value()
-            if ui.rb_leafTransOldCalc.isChecked():
-                simx.PlantModel.LeafTransmittance = 0
-            else:
-                simx.PlantModel.LeafTransmittance = 1
-
-            if ui.rb_TreeCalYes.isChecked():
-                simx.PlantModel.TreeCalendar = 1
-            else:
-                simx.PlantModel.TreeCalendar = 0
-        # now save the simx-file
-        simx.save_simx(ui.le_simxDest.text())
-
-        self.finished.emit()
-
-    # ==================================================================
-    # Data-series comparison and map output
-    # ==================================================================
-    def add_layers_to_map(self):
-        self.progress.emit(0)
-        count = 0
-        number_layers = dataseries.CheckCount
-        for i in range(len(dataseries.mergedList)):
-            dataA, dataB = dataseries.loadDataForTimestep(idx=i)
-            merged = dataseries.mergedList[i]
-
-            # Add data-layer Series A
-            if not (dataA is None):
-                Layer_A = self.CalculateAndAddRasterLayer(tstp=merged.timestepA,
-                                                          data=dataA,
-                                                          series='A',
-                                                          return_layer=True,
-                                                          add_to_map=merged.checkedA)
-                if not (Layer_A is None):
-                    merged.timestepA.QGSLayer = Layer_A
-
-                count += 1
-                self.progress.emit(floor((count / number_layers) * 100))
-
-            # Add data-layer Series B
-            if not (dataB is None):
-                Layer_B = self.CalculateAndAddRasterLayer(tstp=merged.timestepB,
-                                                          data=dataB,
-                                                          series='B',
-                                                          return_layer=True,
-                                                          add_to_map=merged.checkedB)
-                if not (Layer_B is None):
-                    merged.timestepB.QGSLayer = Layer_B
-
-                count += 1
-                self.progress.emit(floor((count / number_layers) * 100))
-
-            # Add data-layer Delta
-            if (not merged.placeholderA) and (not merged.placeholderB) and merged.delta_checked:
-                self.CalculateDeltaLayer(merged=merged)
-
-                count += 1
-                self.progress.emit(floor((count / number_layers) * 100))
-        self.finished.emit()
-
-    def CalculateDeltaLayer(self, merged: merged_timestep):
-        comp_layerA = merged.timestepA.QGSLayer
-        comp_layerB = merged.timestepB.QGSLayer
-        if (comp_layerA is None) or (comp_layerB is None):
-            return
-
-        context = self.get_safe_processing_context()
-        tstpA = merged.timestepA
-        tstpB = merged.timestepB
-        targetResA = min(min(tstpA.spacing_x[len(tstpA.spacing_x) // 2], tstpA.spacing_y[len(tstpA.spacing_y) // 2]), 1.00)
-        targetResB = min(min(tstpB.spacing_x[len(tstpB.spacing_x) // 2], tstpB.spacing_y[len(tstpB.spacing_y) // 2]), 1.00)
-        crs, qgs_crsA = getQGIS_crs(tstpA)
-        crs, qgs_crsB = getQGIS_crs(tstpB)
-        if (targetResA != targetResB) or (qgs_crsA != qgs_crsB):
-            targetRes = min(targetResA, targetResB)
-
-            # It is necessary that both layers have the same resolution and are projected in the same crs
-            # Reproject comp_layerA
-            resampleA = processing.run("gdal:warpreproject",
-                                       {'INPUT': comp_layerA,
-                                        'SOURCE_CRS': qgs_crsA,
-                                        'TARGET_CRS': qgs_crsA,
-                                        'RESAMPLING': C_SAMPLING_METHOD,
-                                        'NODATA': comp_layerA,
-                                        'TARGET_RESOLUTION': targetRes,
-                                        'OPTIONS': '',
-                                        'DATA_TYPE': 6,
-                                        'TARGET_EXTENT': None,
-                                        'TARGET_EXTENT_CRS': None,
-                                        'MULTITHREADING': True,
-                                        'EXTRA': '',
-                                        'OUTPUT': 'TEMPORARY_OUTPUT'},
-                                       context=context)
-            comp_layerA = QgsRasterLayer(resampleA['OUTPUT'], f'{tstpA.date}_{tstpA.time}_SeriesA', 'gdal')
-            comp_layerA.setCrs(qgs_crsA)
-
-            # Reproject comp_layerB
-            resampleB = processing.run("gdal:warpreproject",
-                                       {'INPUT': comp_layerB,
-                                        'SOURCE_CRS': qgs_crsB,
-                                        'TARGET_CRS': qgs_crsA,
-                                        'RESAMPLING': C_SAMPLING_METHOD,
-                                        'NODATA': comp_layerB,
-                                        'TARGET_RESOLUTION': targetRes,
-                                        'OPTIONS': '',
-                                        'DATA_TYPE': 6,
-                                        'TARGET_EXTENT': None,
-                                        'TARGET_EXTENT_CRS': None,
-                                        'MULTITHREADING': True,
-                                        'EXTRA': '',
-                                        'OUTPUT': 'TEMPORARY_OUTPUT'},
-                                       context=context)
-            comp_layerB = QgsRasterLayer(resampleB['OUTPUT'], f'{tstpB.date}_{tstpB.time}_SeriesB', 'gdal')
-            comp_layerB.setCrs(qgs_crsA)
-
-            if not (dataseries.SelectedSubArea is None):
-                polygon_layer = None
-                if dataseries.SelectedSubArea.geometryType() == C_VECTORLAYER_TYPE_POLYGON:
-                    polygon_layer = dataseries.SelectedSubArea
-                elif dataseries.SelectedSubArea.geometryType() == C_VECTORLAYER_TYPE_POINT:
-                    # Since QGIS is not able to clip a single pixel defined by a point from the rasterlayer,
-                    # we need to convert the point of the vector-file to a polygon covering the corresponding pixel
-                    polygon_layer = self.create_polygon_from_point(raster_layer=comp_layerA, target_res=targetRes,
-                                                                   crs=qgs_crsA)
-
-                clipped_A = self._clip_raster_by_mask(comp_layerA, polygon_layer, qgs_crsA, context)
-                comp_layerA = QgsRasterLayer(clipped_A, f'{dataseries.SelectedVariable}_{tstpA.date}_'
-                                             f'{tstpA.time}_SeriesA', 'gdal')
-                comp_layerA.setCrs(qgs_crsA)
-
-                # crsA is correct here (both series aligned to series A's CRS)
-                clipped_B = self._clip_raster_by_mask(comp_layerB, polygon_layer, qgs_crsA, context)
-                comp_layerB = QgsRasterLayer(clipped_B, f'{dataseries.SelectedVariable}_{tstpB.date}_'
-                                             f'{tstpB.time}_SeriesB', 'gdal')
-                comp_layerB.setCrs(qgs_crsA)
-
-        # Calculate the delta-layer (A-B) by using the rastercalculator
-        delta = processing.run("gdal:rastercalculator",
-                               {'INPUT_A': comp_layerA,
-                                'BAND_A': 1,
-                                'INPUT_B': comp_layerB,
-                                'BAND_B': 1,
-                                'INPUT_C': None,
-                                'BAND_C': None,
-                                'INPUT_D': None,
-                                'BAND_D': None,
-                                'INPUT_E': None,
-                                'BAND_E': None,
-                                'INPUT_F': None,
-                                'BAND_F': None,
-                                'FORMULA': 'A-B',
-                                'NO_DATA': C_NODATA_VALUE,
-                                'EXTENT_OPT': 3,  # Intersection
-                                'PROJWIN': None,
-                                'RTYPE': 6,
-                                'OPTIONS': '',
-                                'EXTRA': '',
-                                'OUTPUT': 'TEMPORARY_OUTPUT'},
-                               context=context)
-        delta_layer = QgsRasterLayer(delta['OUTPUT'], f'{dataseries.SelectedVariable}_{tstpB.date}_{tstpB.time}_'
-                                     f'{dataseries.HeightRange}_Delta(A-B)', 'gdal')
-        delta_layer.setCrs(qgs_crsA)
-
-        QgsProject.instance().addMapLayer(delta_layer)
-        provider = delta_layer.dataProvider()
-        if C_COLOR_SCALE_USE_CUSTOM:
-            loading, ramp_shader_items, shader_type, errors \
-                = QgsRasterRendererUtils.parseColorMapFile(C_COLOR_SCALE_CUSTOM_PATH)
-            raster_shader = QgsRasterShader()
-            ramp_shader = QgsColorRampShader()
-            ramp_shader.setColorRampType(shader_type)
-            ramp_shader.setColorRampItemList(ramp_shader_items)
-            raster_shader.setRasterShaderFunction(ramp_shader)
-            renderer = QgsSingleBandPseudoColorRenderer(provider, delta_layer.type(), raster_shader)
-            delta_layer.setRenderer(renderer)
-        else:
-            stats = provider.bandStatistics(1, QgsRasterBandStats.Stats.Min | QgsRasterBandStats.Stats.Max)
-            style = QgsStyle.defaultStyle()
-            ramp = style.colorRamp(C_COLOR_SCALE_NAME)
-            if C_COLOR_SCALE_INVERT:
-                ramp.invert()
-
-            interpolation = get_color_scale_interpolation()
-            mode = get_color_scale_mode()
-
-            color_ramp = QgsColorRampShader(stats.minimumValue, stats.maximumValue, ramp,
-                                            interpolation, mode)
-
-            if mode == QgsColorRampShader.ClassificationMode.Quantile:
-                color_ramp.classifyColorRamp(classes=C_COLOR_SCALE_STEPS, band=1, input=provider)
-            else:
-                color_ramp.classifyColorRamp(classes=C_COLOR_SCALE_STEPS)
-            raster_shader = QgsRasterShader()
-            raster_shader.setRasterShaderFunction(color_ramp)
-            renderer = QgsSingleBandPseudoColorRenderer(provider, delta_layer.type(), raster_shader)
-
-            # use renderer on layer
-            delta_layer.setRenderer(renderer)
-
-    def CalculateAndAddRasterLayer(self, tstp: timestep, data, series: str, return_layer: bool, add_to_map: bool):
-        """
-        :param tstp: A timestep-object, sourced from a merged timestep-object which was sourced from the merged_list of
-                     the dataseries_handler
-        :param data: Data contains a 2d-numpy array with the data which is to convert to a QGIS-Layer
-        :param series: A string indicating if the current timestep is in Series A, B or Delta
-        :param return_layer: Boolean, indicates if the layer-object should be returned by the function at the end
-        :param add_to_map: Boolean, indicates if the layer should be added to the QGIS-map or not
-        :return: is optional, if return_layer is True
-        """
-        # prepare data to be loaded into a raster
-        cols, rows = data.shape
-        # create a rectangle with the extent of the simulation-results (not rotated)
-        extent = QgsRectangle()
-        extent.setXMinimum(tstp.location_georef_x)
-        extent.setYMinimum(tstp.location_georef_y)
-        extent.setXMaximum(tstp.location_georef_x + cols * tstp.spacing_x[len(tstp.spacing_x) // 2])
-        extent.setYMaximum(tstp.location_georef_y + rows * tstp.spacing_y[len(tstp.spacing_y) // 2])
-        crs, qgs_crs = getQGIS_crs(tstp)
-        # create and define the context for QGIS- and GDAL-functions
-        context = self.get_safe_processing_context()
-
-        # Next Step: Create a constant QGIS-layer which has the same extent as the previously defined rectangle
-        # initialize it with nodata-values
-        r = processing.run('qgis:createconstantrasterlayer',
-                           {
-                               'EXTENT': extent,
-                               'TARGET_CRS': qgs_crs,
-                               'PIXEL_SIZE': min(tstp.spacing_x[len(tstp.spacing_x) // 2], tstp.spacing_y[len(tstp.spacing_y) // 2]),
-                               'NUMBER': C_NODATA_VALUE,
-                               'OUTPUT_TYPE': 5,
-                               'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-                           }, context=context
-                           )['OUTPUT']
-        constant_layer = QgsRasterLayer(r, 'temp', 'gdal')
-
-        # Next Step: Fill the constant raster layer with the actual data-values
-        provider = constant_layer.dataProvider()
-        provider.setNoDataValue(1, C_NODATA_VALUE)
-        dataType = provider.dataType(1)
-        block = QgsRasterBlock(dataType, cols, rows)
-
-        # set data from array to raster block
-        for i in range(cols):
-            for j in range(rows):
-                idx_j = rows - j - 1
-                block.setValue(j, i, data[i][idx_j])
-
-        provider.setEditable(True)
-        provider.writeBlock(block, band=1)
-        provider.setEditable(False)
-        provider.reload()
-
-        # Next Step: Vectorize the rasterlayer, which now contains the actual data. Each pixel gets converted to
-        # a polygon
-        polygons = processing.run("native:pixelstopolygons",
-                                  {"INPUT_RASTER": constant_layer,
-                                   "RASTER_BAND": 1,
-                                   "FIELD_NAME": "dataVal",
-                                   "CRS": qgs_crs,
-                                   "OUTPUT": 'TEMPORARY_OUTPUT'},
-                                  context=context)
-        shplayer_polygons = polygons['OUTPUT']
-
-        # Next Step: Rotate the polygon layer by the rotation of the simulation data
-        # and reconvert it to a rasterlayer afterwards
-
-        # set the QGIS project to the CRS of the data, so that the rotation can be made
-        QgsProject.instance().setCrs(qgs_crs)
-        # find rotation center
-        if tstp.location_georef_lat >= 0:
-            xMin_s = tstp.location_georef_x  # self.model_rot_center.x()
-            yMin_s = tstp.location_georef_y  # self.model_rot_center.y()
-            epsg_s = crs.to_authority()[1]
-            anch = str(xMin_s) + "," + str(yMin_s) + " [" + epsg_s + "]"
-        else:
-            xMin_s = tstp.location_georef_x  # self.model_rot_center.x()
-            yMin_s = tstp.location_georef_y + rows * tstp.spacing_y[0]  # self.model_rot_center.y()
-            epsg_s = crs.to_authority()[1]
-            anch = str(xMin_s) + "," + str(yMin_s) + " [" + epsg_s + "]"
-
-        # rotate vector file
-        rotated = processing.run("native:rotatefeatures",
-                                 {"INPUT": shplayer_polygons,
-                                  "ANGLE": tstp.model_rotation,
-                                  "ANCHOR": anch,
-                                  "CRS": qgs_crs,
-                                  "OUTPUT": 'TEMPORARY_OUTPUT'},
-                                 context=context)
-        shplayer_rotated = rotated['OUTPUT']
-
-        # rasterize the rotated vector data
-        raster = processing.run("gdal:rasterize",
-                                {"INPUT": shplayer_rotated,
-                                 "FIELD": 'dataVal',
-                                 "UNITS": 1,
-                                 "WIDTH": tstp.spacing_x[len(tstp.spacing_x) // 2],
-                                 "HEIGHT": tstp.spacing_y[len(tstp.spacing_y) // 2],
-                                 "EXTENT": shplayer_rotated.extent(),
-                                 "NODATA": C_NODATA_VALUE,
-                                 "DATA_TYPE": 5,
-                                 "OUTPUT_TYPE": 5,
-                                 "INIT": C_NODATA_VALUE,
-                                 "INVERT": False,
-                                 "OUTPUT": 'TEMPORARY_OUTPUT'},
-                                context=context)
-        rasterlayer_rotated = QgsRasterLayer(raster['OUTPUT'], 'tmpVec2Ras', 'gdal')
-
-        provider = rasterlayer_rotated.dataProvider()
-        provider.setNoDataValue(1, C_NODATA_VALUE)
-        provider.reload()
-
-        # Interpolation resolution is max 1.00.
-        targetRes = min(min(tstp.spacing_x[len(tstp.spacing_x) // 2], tstp.spacing_y[len(tstp.spacing_y) // 2]), 1.00)
-        # resample data
-        resample = processing.run("gdal:warpreproject",
-                                  {'INPUT': rasterlayer_rotated,
-                                   'SOURCE_CRS': qgs_crs,
-                                   'TARGET_CRS': qgs_crs,
-                                   'RESAMPLING': C_SAMPLING_METHOD,
-                                   'NODATA': rasterlayer_rotated,
-                                   'TARGET_RESOLUTION': targetRes,
-                                   # here, we set 1 meter or if resolution is even better than that use dx/dy
-                                   'OPTIONS': '',
-                                   'DATA_TYPE': 6,
-                                   'TARGET_EXTENT': None,
-                                   'TARGET_EXTENT_CRS': None,
-                                   'MULTITHREADING': True,
-                                   'EXTRA': '',
-                                   'OUTPUT': 'TEMPORARY_OUTPUT'},
-                                  context=context)
-        rasterlayer_resample = QgsRasterLayer(resample['OUTPUT'],
-                                              f'{dataseries.SelectedVariable}_{tstp.date}_{tstp.time}_'
-                                              f'{dataseries.HeightRange}_Series{series}', 'gdal')
-        rasterlayer_resample.setCrs(qgs_crs)
-        # Set final layer for handling at the end of this function
-        rasterlayer_final = rasterlayer_resample
-
-        # Next Step: If the user selected a subarea, we clip the raster to the desired subarea here
-        if not (dataseries.SelectedSubArea is None):
-            clipped = self._clip_raster_by_mask(rasterlayer_resample, dataseries.SelectedSubArea, qgs_crs, context)
-            rasterlayer_clipped = QgsRasterLayer(clipped,
-                                                 f'{dataseries.SelectedVariable}_{tstp.date}_{tstp.time}_'
-                                                 f'{dataseries.HeightRange}_Series{series}', 'gdal')
-            rasterlayer_clipped.setCrs(qgs_crs)
-            # override final layer, because we executed this optional branch
-            rasterlayer_final = rasterlayer_clipped
-
-        # Next Step: Add the rasterlayer to the QGIS-map (not always the case)
-        if add_to_map:
-            # add the rasterlayer to the map
-            QgsProject.instance().addMapLayer(rasterlayer_final)
-
-            # set the color settings the legend
-            if C_COLOR_SCALE_USE_CUSTOM:
-                # If this constant is set, we load a self defined color-ramp. This must be a .txt-file generated by the
-                # QGIS legend settings (where a user can save/export these settings) or atleast has the same syntax
-                loading, ramp_shader_items, shader_type, errors \
-                    = QgsRasterRendererUtils.parseColorMapFile(C_COLOR_SCALE_CUSTOM_PATH)
-                raster_shader = QgsRasterShader()
-                ramp_shader = QgsColorRampShader()
-                ramp_shader.setColorRampType(shader_type)
-                ramp_shader.setColorRampItemList(ramp_shader_items)
-                raster_shader.setRasterShaderFunction(ramp_shader)
-                renderer = QgsSingleBandPseudoColorRenderer(provider, rasterlayer_final.type(), raster_shader)
-                rasterlayer_final.setRenderer(renderer)
-            else:
-                # Otherwise we load the default color-ramp defined in Const_defines
-                stats = provider.bandStatistics(1, QgsRasterBandStats.Stats.Min | QgsRasterBandStats.Stats.Max)
-                style = QgsStyle.defaultStyle()
-                ramp = style.colorRamp(C_COLOR_SCALE_NAME)
-                if C_COLOR_SCALE_INVERT:
-                    ramp.invert()
-
-                interpolation = get_color_scale_interpolation()
-                mode = get_color_scale_mode()
-                color_ramp = QgsColorRampShader(stats.minimumValue, stats.maximumValue, ramp,
-                                                interpolation, mode)
-
-                if mode == QgsColorRampShader.ClassificationMode.Quantile:
-                    color_ramp.classifyColorRamp(classes=C_COLOR_SCALE_STEPS, band=1, input=provider)
-                else:
-                    color_ramp.classifyColorRamp(classes=C_COLOR_SCALE_STEPS)
-
-                raster_shader = QgsRasterShader()
-                raster_shader.setRasterShaderFunction(color_ramp)
-                renderer = QgsSingleBandPseudoColorRenderer(provider, rasterlayer_final.type(), raster_shader)
-
-                # use renderer on layer
-                rasterlayer_final.setRenderer(renderer)
-
-        if return_layer:
-            return rasterlayer_final
-        else:
-            return None
 
     # ==================================================================
     # Processing utilities

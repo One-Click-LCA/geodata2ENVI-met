@@ -40,6 +40,8 @@ class SafeTranslationsTest(unittest.TestCase):
         dir_path = os.path.abspath(parent_path)
         file_path = os.path.join(
             dir_path, 'i18n', 'af.qm')
+        if not os.path.exists(file_path):
+            self.skipTest('i18n/af.qm is not compiled (only af.ts is in the repository)')
         translator = QTranslator()
         translator.load(file_path)
         QCoreApplication.installTranslator(translator)

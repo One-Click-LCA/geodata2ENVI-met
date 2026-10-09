@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import os
 
@@ -5,6 +6,14 @@ import os
 Description: This file contains a class to load the ENVImet-Database as well as a class to automatically
 load the default projects-folder with every containing project
 '''
+
+
+def decode_line(row):
+    """A line of an ENVI-met file: UTF-8 (ENVI-met 6), else Windows-1252 (older versions)."""
+    try:
+        return row.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return row.decode('cp1252', errors='replace')
 
 
 class EnviProjects:
@@ -31,7 +40,7 @@ class EnviProjects:
     def load_usersettings(self):
         settings = open(self.usersettings, 'br')
         for row in settings:
-            row = row.decode('cp1252')
+            row = decode_line(row)
             # print(row)
             if '<absolute_path>' in row:
                 self.workspace = row.split(">", 1)[1].split("<", 1)[0].replace('\\', '/').strip()
@@ -55,13 +64,14 @@ class EnviProjects:
                 new_project.projectPath = p
                 info_file = open(p + '/project.infoX', 'br')
                 for row in info_file:
-                    row = row.decode('cp1252')
+                    row = decode_line(row)
                     if '<name>' in row:
                         new_project.name = row.split(">", 1)[1].split("<", 1)[0]
                     if '<description>' in row:
                         new_project.description = row.split(">", 1)[1].split("<", 1)[0]
                     if '<useProjectDB>' in row:
-                        new_project.useProjectDB = bool(row.split(">", 1)[1].split("<", 1)[0].strip())
+                        # '0' or '1'; bool('0') would be True
+                        new_project.useProjectDB = row.split(">", 1)[1].split("<", 1)[0].strip() not in ('', '0')
                 # if new_project.useProjectDB and os.path.exists(new_project.projectPath + '/projectdatabase.edb'):
                 #    new_project.DB = ENVImetDB(filepath=self.sysDB_path, use_project_db=True, filepath_project_db=new_project.projectPath + '/projectdatabase.edb')
                 # else:
@@ -120,11 +130,40 @@ class ENVImetDB:
     def get_np_array(db):
         lines = []
         for row in db:
-            row = row.decode('cp1252')
+            row = decode_line(row)
             lines.append(row)
         return np.asarray(lines, dtype=str)
 
+    # JSON database (ENVI-met 6): list name -> (dict attribute, entry class)
+    JSON_LISTS = (('soils', 'soil_dict', 'SOIL'), ('soilProfiles', 'profile_dict', 'PROFILE'),
+                  ('materials', 'material_dict', 'MATERIAL'), ('walls', 'wall_dict', 'WALL'),
+                  ('singleFaces', 'singlewall_dict', 'SINGLEWALL'), ('waterSources', 'sources_dict', 'SOURCE'),
+                  ('emitters', 'sources_dict', 'SOURCE'), ('simplePlants', 'plant_dict', 'PLANT'),
+                  ('greening', 'greening_dict', 'GREENING'), ('plants3d', 'plant3d_dict', 'PLANT3D'))
+
+    def load_json_data(self, text):
+        """Entries of an ENVI-met 6 database: ID, description and group (all the Database tab shows)."""
+        data = json.loads(text).get('envimetDatafile', {})
+        header = data.get('header', {})
+        self.filetype = header.get('fileType', '')
+        self.version = header.get('version', 0)
+        self.revisiondate = header.get('revisionDate', '')
+        self.remark = header.get('remark', '')
+        for name, attribute, cls in self.JSON_LISTS:
+            for item in data.get(name) or []:
+                entry = globals()[cls]()
+                entry.ID = str(item.get('id', '')).strip()
+                entry.Description = str(item.get('desc', ''))
+                entry.Group = str(item.get('grp', ''))
+                getattr(self, attribute)[entry.ID] = entry
+
     def load_data(self, database_path):
+        with open(database_path, 'rb') as f:
+            head = f.read(64).lstrip(b'\xef\xbb\xbf \t\r\n')
+        if head.startswith(b'{'):
+            with open(database_path, 'rb') as f:
+                self.load_json_data(decode_line(f.read()))
+            return
         databaseF = open(database_path, 'br')
         database = self.get_np_array(databaseF)
         count = 0

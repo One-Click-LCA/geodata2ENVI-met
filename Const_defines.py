@@ -50,8 +50,10 @@ C_PRINT_SOURCE_FONTSIZE = 8
 if Qgis.versionInt() >= 33800:
     from qgis.PyQt.QtCore import QMetaType as _QMetaType
     FIELD_TYPE_INT = _QMetaType.Type.Int
+    FIELD_TYPE_DOUBLE = _QMetaType.Type.Double
     FIELD_TYPE_STRING = _QMetaType.Type.QString
 else:
     from qgis.PyQt.QtCore import QVariant as _QVariant
     FIELD_TYPE_INT = _QVariant.Type.Int
+    FIELD_TYPE_DOUBLE = _QVariant.Type.Double
     FIELD_TYPE_STRING = _QVariant.Type.String
