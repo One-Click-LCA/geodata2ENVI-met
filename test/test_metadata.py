@@ -21,6 +21,13 @@ class MetadataTest(unittest.TestCase):
         major = int(general['qgisMaximumVersion'].split('.')[0])
         self.assertGreaterEqual(major, 4)
 
+    def test_minimum_is_the_oldest_tested_qgis(self):
+        # the plugin uses APIs of QGIS 3.30+ (e.g. Qgis.WkbType) and is tested on 3.34 LTR and 4.0
+        parser = configparser.ConfigParser()
+        parser.optionxform = str
+        parser.read(os.path.join(PLUGIN_DIR, 'metadata.txt'), encoding='utf-8')
+        self.assertEqual(parser['general']['qgisMinimumVersion'], '3.34')
+
 
 if __name__ == '__main__':
     unittest.main()

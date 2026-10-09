@@ -65,10 +65,12 @@ def cell_centres(x0=X0, y0=Y0, rotation=ROTATION, nx=NX, ny=NY, dx=DX):
     return x0 + xx * math.cos(r) + yy * math.sin(r), y0 - xx * math.sin(r) + yy * math.cos(r)
 
 
-def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitude=LATITUDE, dz=None):
+def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitude=LATITUDE, dz=None,
+                 with_objects=True):
     """An ENVI-met main output file; ``layout='old'`` mimics files from before the CF update.
 
     ``dz``: other level thicknesses (as many as DZ), for a run with another vertical grid.
+    ``with_objects=False``: 3D data without an Objects field, as in some report files.
     """
     import netCDF4
     dz = DZ if dz is None else dz
@@ -137,7 +139,7 @@ def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitu
             return v
 
         dem = data_var('DEMOffset', 'Terrain Height as Vertical Grid Cell Count', ('Time', 'GridsJ', 'GridsI'), 'i4')
-        objects = data_var('Objects', 'Objects', ('Time', 'GridsK', 'GridsJ', 'GridsI'), 'i4')
+        objects = data_var('Objects', 'Objects', ('Time', 'GridsK', 'GridsJ', 'GridsI'), 'i4') if with_objects else None
         t = data_var('T', 'Air Temperature', ('Time', 'GridsK', 'GridsJ', 'GridsI'), units=celsius)
         u = data_var('UTCIBiomet', 'Universal Thermal Climate Index at Biometeorogical Height Level',
                      ('Time', 'GridsJ', 'GridsI'), units=celsius)
@@ -148,7 +150,8 @@ def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitu
         soil_t = data_var('SoilTemp', 'Soil Temperature', ('Time', 'SoilLevels', 'GridsJ', 'GridsI'), units=celsius)
         for step in range(2):
             dem[step] = dem_offset()
-            objects[step] = objects_field()
+            if objects is not None:
+                objects[step] = objects_field()
             t[step] = temperature(step)
             u[step] = utci(step)
             wx[step] = temperature(step) + 1

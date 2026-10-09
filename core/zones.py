@@ -67,18 +67,22 @@ class StaticFields:
         Only for comparison: the pedestrian level is always ENVI-met's current rule (see
         pedestrian_levels); files from 5.8 and older report other levels, e.g. on top of roofs.
     :param air_2d: (ny, nx) bool, for 2D files without Objects: where the pedestrian level is air
+    :param has_levels: the file has 3D variables, also without an Objects field (e.g. some report
+        files). Then every cell counts as air in the masks; cells inside buildings or terrain drop
+        out of the statistics through their missing values.
     """
 
-    def __init__(self, dem, dz, objects=None, reported_biomet_k=None, air_2d=None):
+    def __init__(self, dem, dz, objects=None, reported_biomet_k=None, air_2d=None, has_levels=False):
         self.dem = np.asarray(dem, dtype=int)
         self.dz = np.asarray(dz, dtype=float)
         self.objects = objects
         self.reported_biomet_k = reported_biomet_k
         self.air_2d = air_2d
+        self.has_levels = has_levels
 
     @property
     def is_3d(self):
-        return self.objects is not None
+        return self.objects is not None or self.has_levels
 
     def level_bottoms(self):
         return np.concatenate([[0.0], np.cumsum(self.dz)[:-1]])
@@ -99,7 +103,9 @@ class StaticFields:
 
     def is_air(self, k, j, i):
         if self.objects is None:
-            return np.ones(len(i), dtype=bool) if self.air_2d is None else self.air_2d[j, i]
+            if self.has_levels or self.air_2d is None:
+                return np.ones(len(i), dtype=bool)
+            return self.air_2d[j, i]
         value = np.rint(self.objects[k, j, i]).astype(int)
         return (value != BUILDING_ID) & (value != TERRAIN_ID)
 

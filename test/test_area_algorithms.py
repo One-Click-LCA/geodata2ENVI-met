@@ -141,6 +141,21 @@ class AreaAlgorithmsTest(unittest.TestCase):
                                     RESULTS_FILE=os.path.join(self.root, 'NetCDF', 'sim_001.nc'))
         self.assertEqual({r['scenario'] for r in read_csv(result['STATISTICS'])}, {'A'})
 
+    def test_3d_results_without_objects(self):
+        """Without an Objects field every cell counts as air; building cells drop out by their missing values."""
+        path = fx.write_netcdf(os.path.join(self.tmp, 'no_objects', 'Report.nc'), with_objects=False)
+
+        def means(rows):
+            return {(r['zone_id'], r['datetime']): (r['n_valid'], round(float(r['mean']), 6)) for r in rows
+                    if r['scenario'] == 'A'}
+        for vertical in ({}, {'VERTICAL': 1, 'Z_MIN': 0.0, 'Z_MAX': 3.0}):
+            with self.subTest(**vertical):
+                usual = self.run_algorithm('areastatistics', VARIABLES='T', **vertical)
+                bare = self.run_algorithm('areastatistics', VARIABLES='T', RESULTS=None, RESULTS_FILE=path,
+                                          **vertical)
+                self.assertEqual(means(read_csv(bare['STATISTICS'])), means(read_csv(usual['STATISTICS'])))
+                self.assertTrue(all(c['k'] != '' for c in read_csv(bare['CELLS_CSV'])))
+
     def test_text_ids_stay_distinct(self):
         """"01" and "1" are two areas; "1" becomes a number, "01" stays text."""
         string = import_plugin_module('Const_defines').FIELD_TYPE_STRING

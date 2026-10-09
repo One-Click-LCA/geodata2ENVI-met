@@ -385,7 +385,8 @@ class NetcdfFile(ResultFile):
             if np.all(node >= 1):
                 biomet = np.rint(node).astype(int) - 1
         return StaticFields(self.dem_offset(0), self.grid.dz if self.grid.dz is not None else [1.0],
-                            objects=objects, reported_biomet_k=biomet, air_2d=air)
+                            objects=objects, reported_biomet_k=biomet, air_2d=air,
+                            has_levels=any(v.kind == KIND_3D for v in self.variables.values()))
 
     def read(self, key, time_index=0, height=0.0):
         var = self._ds.variables[key]
@@ -506,7 +507,8 @@ class EdxFile(ResultFile):
         if self.nz > 1 and 'Objects' in self._index:
             objects = self._read_levels(self._index['Objects'], 0, self.nz)[:, self.core_y, self.core_x]
             return StaticFields(self.dem_offset(), self.grid.dz, objects=objects)
-        return StaticFields(np.zeros((self.grid.ny, self.grid.nx), dtype=int), self.grid.dz, air_2d=self._air_2d())
+        return StaticFields(np.zeros((self.grid.ny, self.grid.nx), dtype=int), self.grid.dz, air_2d=self._air_2d(),
+                            has_levels=any(v.kind == KIND_3D for v in self.variables.values()))
 
     def soil_depths(self):
         """Depth (m) of the middle of each soil layer, as the NetCDF output's SoilLevels; None for other files."""
