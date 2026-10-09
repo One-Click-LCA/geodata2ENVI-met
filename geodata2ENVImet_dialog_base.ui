@@ -4984,6 +4984,39 @@ p, li { white-space: pre-wrap; }
                        </layout>
                       </widget>
                      </item>
+                     <item>
+                      <widget class="QGroupBox" name="gb_forceBgConc">
+                       <property name="toolTip">
+                        <string>Only when the FOX file holds background concentrations of the pollutants</string>
+                       </property>
+                       <property name="title">
+                        <string>Do you want to force background concentrations?</string>
+                       </property>
+                       <layout class="QGridLayout" name="gridLayout_forceBgConc">
+                        <item row="0" column="0">
+                         <layout class="QHBoxLayout" name="horizontalLayout_forceBgConc">
+                          <item>
+                           <widget class="QRadioButton" name="rb_forceBgConc_yes">
+                            <property name="text">
+                             <string>Yes</string>
+                            </property>
+                           </widget>
+                          </item>
+                          <item>
+                           <widget class="QRadioButton" name="rb_forceBgConc_no">
+                            <property name="text">
+                             <string>No</string>
+                            </property>
+                            <property name="checked">
+                             <bool>true</bool>
+                            </property>
+                           </widget>
+                          </item>
+                         </layout>
+                        </item>
+                       </layout>
+                      </widget>
+                     </item>
                     </layout>
                    </item>
                   </layout>

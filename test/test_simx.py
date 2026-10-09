@@ -255,10 +255,14 @@ class SimxTabTest(_TempDir):
         dlg.le_selectedFOX.setText('station.FOX')
         dlg.rb_forceT_no.setChecked(True)
         dlg.rb_forceRadC_no.setChecked(True)
+        self.assertTrue(dlg.rb_forceBgConc_no.isChecked())        # off unless asked for
+        self.assertIs(self.ui.model_from_ui(dlg)['FullForcing']['forceBackgrConc'], False)
+        dlg.rb_forceBgConc_yes.setChecked(True)
         dlg.sb_initT.setValue(18.5)
         dlg.sb_mediumclouds.setValue(3)
         simulation = self.ui.model_from_ui(dlg)
         self.assertEqual(simulation['FullForcing']['forceT'], False)
+        self.assertIs(simulation['FullForcing']['forceBackgrConc'], True)
         self.assertAlmostEqual(simulation['mainData']['T_H'], 18.5 + self.ui.KELVIN_OFFSET)
         self.assertEqual(simulation['Clouds']['middleClouds'], 3)
         self.assertNotIn('nudging', simulation['FullForcing'])
@@ -267,7 +271,7 @@ class SimxTabTest(_TempDir):
         self.assertTrue(dlg.cb_meteo.isChecked())
         self.assertEqual(dlg.le_selectedFOX.text(), 'station.FOX')
         self.assertTrue(dlg.rb_forceT_no.isChecked() and dlg.rb_forceRadC_no.isChecked())
-        self.assertTrue(dlg.rb_forceWind_yes.isChecked())
+        self.assertTrue(dlg.rb_forceWind_yes.isChecked() and dlg.rb_forceBgConc_yes.isChecked())
         self.assertAlmostEqual(dlg.sb_initT.value(), 18.5)
         self.assertEqual(dlg.sb_mediumclouds.value(), 3)
 

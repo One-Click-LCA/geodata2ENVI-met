@@ -54,8 +54,8 @@ def model_from_ui(dlg, base=None, json_format=True):
         full = simulation['FullForcing'] = loaded_full if isinstance(loaded_full, dict) else OrderedDict()
         full.update(fileName=dlg.le_selectedFOX.text().strip(), forceT=_checked(dlg.rb_forceT_yes),
                     forceQ=_checked(dlg.rb_forceHum_yes), forceWind=_checked(dlg.rb_forceWind_yes),
-                    forcePrecip=_checked(dlg.rb_forcePrec_yes), forceRadClouds=_checked(dlg.rb_forceRadC_yes))
-        full.setdefault('forceBackgrConc', False)
+                    forcePrecip=_checked(dlg.rb_forcePrec_yes), forceRadClouds=_checked(dlg.rb_forceRadC_yes),
+                    forceBackgrConc=_checked(dlg.rb_forceBgConc_yes))
         if not json_format:
             for key, value in (('interpolationMethod', 0), ('nudging', False), ('nudgingFactor', 1.0),
                                ('minFlowsteps', 50), ('limitWind2500', False), ('maxWind2500', 999.0),
@@ -234,6 +234,7 @@ def ui_from_model(dlg, simulation):
                              ('forcePrecip', dlg.rb_forcePrec_yes, dlg.rb_forcePrec_no),
                              ('forceRadClouds', dlg.rb_forceRadC_yes, dlg.rb_forceRadC_no)):
             (yes if full.get(key, True) else no).setChecked(True)
+        (dlg.rb_forceBgConc_yes if full.get('forceBackgrConc', False) else dlg.rb_forceBgConc_no).setChecked(True)
         if 'T_H' in main:
             _set(dlg.sb_initT, main['T_H'] - kelvin)
         _set(dlg.sb_constWS_FUFo, main.get('windSpeed'))
