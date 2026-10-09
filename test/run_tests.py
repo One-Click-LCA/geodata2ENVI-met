@@ -7,6 +7,10 @@ Run it with the Python of each supported QGIS, e.g. on Windows:
     "C:\\Program Files\\QGIS 4.0.0\\bin\\python-qgis.bat" test\\run_tests.py
 
 ``-p test_inx*.py`` selects test files, ``-k name`` selects tests by name.
+
+Optional checks against local data, skipped when the variable is not set:
+G2E_TEST_OUTPUTS (a folder of real ENVI-met outputs) and G2E_ENVIMET_LIB (the
+sources of ENVI-met's shared library, for the SIMX keys its reader expects).
 """
 
 import argparse

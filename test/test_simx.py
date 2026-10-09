@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -11,6 +12,10 @@ from .plugin_env import import_plugin_module, make_plugin
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 GUIDE_595 = os.path.join(DATA, 'guide_595.simx')
+
+# Optional: the sources of ENVI-met's shared library, to check the written keys against its SIMX reader
+ENVIMET_LIB = os.environ.get('G2E_ENVIMET_LIB', '')
+LIB_SIMX_READER = os.path.join(ENVIMET_LIB, 'BIOS', 'u_tSIMXFile.pas') if ENVIMET_LIB else ''
 
 # An ENVI-met 6 file as ENVI-guide writes it: open/cyclic boundaries and the indoor climate section
 GUIDE_V6 = '''{
@@ -363,6 +368,86 @@ class SimxTabTest(_TempDir):
         dlg.sb_indoorUpper.setValue(24.0)
         dlg.sb_indoorUpper.editingFinished.emit()
         self.assertEqual(dlg.sb_indoorUpper.value(), 27.0)
+
+
+def keys_read_by_envimet(path):
+    """{(section, key): type} that ENVI-met's JSON SIMX reader asks for ('any' for arrays)."""
+    with open(path, encoding='utf-8', errors='replace') as f:
+        text = f.read()
+    reader = text[text.index('function tSIMXFile.LoadFromFileJSON'):text.index('function tSIMXFile.SaveToFileJSON')]
+    keys, section = {}, None
+    for line in reader.splitlines():
+        opened = re.search(r"LJson\.TryGetValue\('(\w+)'", line)
+        if opened:
+            section = opened.group(1)
+            continue
+        for kind, key in re.findall(r"GetValue<(\w+)>\('(\w+)'", line):
+            keys[(section, key)] = kind.lower()
+        for key in re.findall(r"\bSection\.TryGetValue\('(\w+)'", line):
+            keys[(section, key)] = 'any'
+    return keys
+
+
+# JSON value type written by the plugin -> reader types that accept it
+ACCEPTED = {bool: {'boolean'}, int: {'integer', 'int64', 'double', 'single', 'extended'},
+            float: {'double', 'single', 'extended'}, str: {'string'}, list: {'any'}}
+
+
+@unittest.skipUnless(LIB_SIMX_READER and os.path.isfile(LIB_SIMX_READER),
+                     'set G2E_ENVIMET_LIB to the ENVI-met lib sources to check the keys against its SIMX reader')
+class KeysReadByEnvimetTest(_TempDir):
+    """Every key the plugin writes is read by ENVI-met, with a type its reader converts."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.plugin = make_plugin()
+        cls.ui = import_plugin_module('simx_ui')
+        cls.simx = import_plugin_module('core.simx')
+        cls.read_keys = keys_read_by_envimet(LIB_SIMX_READER)
+
+    def written(self):
+        path = self.simx.write_json(self.path('keys.simx'), self.ui.model_from_ui(self.plugin.dlg))
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+
+    def unread(self, data):
+        problems = []
+        for section, values in data.items():
+            for key, value in values.items():
+                kind = self.read_keys.get((section, key))
+                if kind is None:
+                    problems.append(f'{section}/{key} is not read')
+                elif kind not in ACCEPTED[type(value)]:
+                    problems.append(f'{section}/{key}: written as {type(value).__name__}, read as {kind}')
+        return problems
+
+    def test_the_reader_was_understood(self):
+        self.assertEqual(self.read_keys[('mainData', 'simDuration')], 'integer')
+        self.assertEqual(self.read_keys[('SimpleForcing', 'TAir')], 'any')
+        self.assertEqual(self.read_keys[('indoorSettings', 'indoorLowerC')], 'double')
+        # what the plugin leaves out for ENVI-met 6 is indeed not read any more
+        for section, keys in self.simx.RETIRED_V6['keys'].items():
+            for key in keys:
+                self.assertNotIn((section, key), self.read_keys)
+        sections = {section for section, _ in self.read_keys}
+        self.assertFalse(self.simx.RETIRED_V6['sections'] & sections)
+
+    def test_every_forcing_mode_with_every_section(self):
+        from qgis.PyQt.QtCore import Qt
+        plugin, dlg = self.plugin, self.plugin.dlg
+        plugin.clear_settings_create_sim_tab()
+        for box in (dlg.chk_soilSim, dlg.chk_buildingsSim, dlg.chk_pollutantsSim, dlg.chk_radiationSim,
+                    dlg.chk_outputSim, dlg.chk_expertSim):
+            box.setCheckState(Qt.CheckState.Checked)
+        problems = self.unread(self.written())
+        dlg.rb_fullForcing.click()
+        for no in (dlg.rb_forceT_no, dlg.rb_forceHum_no, dlg.rb_forceWind_no, dlg.rb_forceRadC_no):
+            no.setChecked(True)
+        problems += self.unread(self.written())
+        dlg.rb_other.click()
+        problems += self.unread(self.written())
+        self.assertEqual(sorted(set(problems)), [])
 
 
 if __name__ == '__main__':
