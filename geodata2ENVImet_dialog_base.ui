@@ -663,6 +663,96 @@ p, li { white-space: pre-wrap; }
                       </item>
                      </layout>
                     </widget>
+                    <widget class="QWidget" name="tab_surrounding">
+                     <attribute name="title">
+                      <string>Surrounding Area</string>
+                     </attribute>
+                     <layout class="QGridLayout" name="gridLayout_surrounding">
+                      <item row="0" column="0" colspan="2">
+                       <widget class="QLabel" name="lb_surroundingInfo">
+                        <property name="text">
+                         <string>ENVI-met 6 only; older versions ignore this. Describes the land outside each border of the model area as one of 27 urban or land-cover types. It sets the roughness of the inflow wind profile and, for the radiation, the skyline beyond the border.</string>
+                        </property>
+                        <property name="wordWrap">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="0" colspan="2">
+                       <widget class="QCheckBox" name="chk_surroundingArea">
+                        <property name="text">
+                         <string>Use the surrounding area</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="0">
+                       <widget class="QLabel" name="lb_borderLeft">
+                        <property name="text">
+                         <string>Left border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="1">
+                       <widget class="QComboBox" name="cb_borderLeft"/>
+                      </item>
+                      <item row="3" column="0">
+                       <widget class="QLabel" name="lb_borderRight">
+                        <property name="text">
+                         <string>Right border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="1">
+                       <widget class="QComboBox" name="cb_borderRight"/>
+                      </item>
+                      <item row="4" column="0">
+                       <widget class="QLabel" name="lb_borderFront">
+                        <property name="text">
+                         <string>Front border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="1">
+                       <widget class="QComboBox" name="cb_borderFront"/>
+                      </item>
+                      <item row="5" column="0">
+                       <widget class="QLabel" name="lb_borderRear">
+                        <property name="text">
+                         <string>Rear border:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="1">
+                       <widget class="QComboBox" name="cb_borderRear"/>
+                      </item>
+                      <item row="6" column="0" colspan="2">
+                       <widget class="QLabel" name="lb_borderDirections">
+                        <property name="text">
+                         <string>Select a sub area to see which direction each border faces.</string>
+                        </property>
+                        <property name="wordWrap">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="7" column="0">
+                       <spacer name="verticalSpacer_surrounding">
+                        <property name="orientation">
+                         <enum>Qt::Vertical</enum>
+                        </property>
+                        <property name="sizeHint" stdset="0">
+                         <size>
+                          <width>20</width>
+                          <height>40</height>
+                         </size>
+                        </property>
+                       </spacer>
+                      </item>
+                     </layout>
+                    </widget>
                    </widget>
                   </item>
                   <item row="1" column="0">
@@ -1070,6 +1160,226 @@ p, li { white-space: pre-wrap; }
                          <bool>true</bool>
                         </property>
                        </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                    <widget class="QWidget" name="indoorBuilding">
+                     <attribute name="title">
+                      <string>Indoor Climate</string>
+                     </attribute>
+                     <layout class="QGridLayout" name="gridLayout_bIndoor">
+                      <item row="0" column="0" colspan="4">
+                       <widget class="QLabel" name="lb_bIndoorInfo">
+                        <property name="text">
+                         <string>ENVI-met 6 only; older versions ignore these settings. A building without a value uses the indoor climate settings of the simulation (Create ENVI-met simulation &gt; Indoor Climate). Attribute fields may hold the codes or words such as residential, office, hall, heated, mixed or AC.</string>
+                        </property>
+                        <property name="wordWrap">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="0">
+                       <widget class="QLabel" name="lb_bUse">
+                        <property name="text">
+                         <string>Select field for building use [0-4 or text]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bUse">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="2">
+                       <widget class="QCheckBox" name="chk_bUse">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="1" column="3">
+                       <widget class="QComboBox" name="cmb_bUse"/>
+                      </item>
+                      <item row="2" column="0">
+                       <widget class="QLabel" name="lb_bIndoorMode">
+                        <property name="text">
+                         <string>Select field for climate control [-1 to 3 or text]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bIndoorMode">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="2">
+                       <widget class="QCheckBox" name="chk_bIndoorMode">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="2" column="3">
+                       <widget class="QComboBox" name="cmb_bIndoorMode"/>
+                      </item>
+                      <item row="3" column="0">
+                       <widget class="QLabel" name="lb_bIndoorLower">
+                        <property name="text">
+                         <string>Select field for lower indoor threshold [°C]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bIndoorLower">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="2">
+                       <widget class="QCheckBox" name="chk_bIndoorLower">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="3" column="3">
+                       <widget class="QLineEdit" name="le_bIndoorLower">
+                        <property name="minimumSize">
+                         <size>
+                          <width>80</width>
+                          <height>20</height>
+                         </size>
+                        </property>
+                        <property name="placeholderText">
+                         <string>simulation setting</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="0">
+                       <widget class="QLabel" name="lb_bIndoorUpper">
+                        <property name="text">
+                         <string>Select field for upper indoor threshold [°C]:</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bIndoorUpper">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="2">
+                       <widget class="QCheckBox" name="chk_bIndoorUpper">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="4" column="3">
+                       <widget class="QLineEdit" name="le_bIndoorUpper">
+                        <property name="minimumSize">
+                         <size>
+                          <width>80</width>
+                          <height>20</height>
+                         </size>
+                        </property>
+                        <property name="placeholderText">
+                         <string>simulation setting</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="0">
+                       <widget class="QLabel" name="lb_bInternalGain">
+                        <property name="text">
+                         <string>Select field for internal heat gain [W/m²] (use 'Other' only):</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="1">
+                       <widget class="QgsFieldComboBox" name="cb_bInternalGain">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="2">
+                       <widget class="QCheckBox" name="chk_bInternalGain">
+                        <property name="text">
+                         <string>Use static value instead:</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="5" column="3">
+                       <widget class="QLineEdit" name="le_bInternalGain">
+                        <property name="minimumSize">
+                         <size>
+                          <width>80</width>
+                          <height>20</height>
+                         </size>
+                        </property>
+                        <property name="placeholderText">
+                         <string>8</string>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="6" column="0" colspan="4">
+                       <widget class="QCheckBox" name="chk_bSuppressACHeat">
+                        <property name="text">
+                         <string>Discard the heat of air conditioners instead of releasing it into the outdoor air (diagnostic only, not physical)</string>
+                        </property>
+                        <property name="checked">
+                         <bool>false</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item row="7" column="1">
+                       <spacer name="verticalSpacer_bIndoor">
+                        <property name="orientation">
+                         <enum>Qt::Vertical</enum>
+                        </property>
+                        <property name="sizeHint" stdset="0">
+                         <size>
+                          <width>20</width>
+                          <height>40</height>
+                         </size>
+                        </property>
+                       </spacer>
                       </item>
                      </layout>
                     </widget>

@@ -24,11 +24,12 @@ from .Const_defines import C_NODATA_VALUE, FIELD_TYPE_INT, FIELD_TYPE_STRING
 from .worker_helpers import get_UTM_zone
 from .core.grid import raster_to_envimet_ij, raster_to_inx_receptor_cell
 from .core.inx_arrays import border_mask, first_non_empty, map_codes, map_values, matrix_text
-from .core import location
+from .core import indoor, location, surrounding
 
 
 class Building:
-    def __init__(self, BldInternalNum, BldName, BldWallMat, BldRoofMat, BldFacadeGreen, BldRoofGreen, BldBPS, BldInModelArea):
+    def __init__(self, BldInternalNum, BldName, BldWallMat, BldRoofMat, BldFacadeGreen, BldRoofGreen, BldBPS, BldInModelArea,
+                 indoor_settings=None):
         self.BuildingInternalNumber = BldInternalNum
         self.BuildingName = BldName
         self.BuildingWallMaterial = BldWallMat
@@ -37,6 +38,8 @@ class Building:
         self.BuildingRoofGreening = BldRoofGreen
         self.BuildingBPS = BldBPS
         self.BuildingInModelArea = BldInModelArea
+        # use/mode/lower/upper/gain -> value as read; parsed when written (core.indoor)
+        self.indoor = indoor_settings or {}
 
 
 class TmpTree3D:
@@ -118,6 +121,14 @@ class Worker(QObject):
         self.bGreenWall_UseCustom = False
         self.bGreenRoof_UseCustom = False
         self.bBPS_disabled = False
+        # indoor climate per building (ENVI-met 6): key -> (attribute field or None, static value);
+        # empty values mean "not stated", so the simulation's setting applies
+        self.bIndoor = {key: (None, '') for key in indoor.PARSERS}
+        self.bSuppressACHeat = False
+
+        # surrounding area (ENVI-met 6): on/off and the type index per border
+        self.useSurroundingArea = True
+        self.surroundingBorders = {border: surrounding.DEFAULT_TYPE for border in surrounding.BORDERS}
 
         self.surfLayerfromVector = True
 
@@ -534,6 +545,7 @@ class Worker(QObject):
         # QgsProject.instance().addMapLayer(self.bLayer_rot)
 
         # we now have building numbers for all elements, but we should only write the ones that are in our extent
+        unreadable = {}
         for f in self.bLayer_rot.getFeatures():
             if f.geometry().intersects(self.subAreaExtent):
                 s_bNumber = f.attribute(bNumber_int)
@@ -570,13 +582,30 @@ class Worker(QObject):
                     else:
                         s_bBPS = '0'
 
+                indoor_settings = self._indoor_settings(f, unreadable)
                 newBuild = Building(BldInternalNum=s_bNumber, BldName=s_bName, BldWallMat=s_bWall, BldRoofMat=s_bRoof,
-                                    BldFacadeGreen=s_bGWall, BldRoofGreen=s_bGRoof, BldBPS=s_bBPS, BldInModelArea=True)
+                                    BldFacadeGreen=s_bGWall, BldRoofGreen=s_bGRoof, BldBPS=s_bBPS, BldInModelArea=True,
+                                    indoor_settings=indoor_settings)
                 self.s_buildingDict[s_bNumber] = newBuild
-                # print(self.s_buildingDict[s_bNumber].BuildingInternalNumber)
-                # print('as')
 
+        for key, values in unreadable.items():
+            field = self.bIndoor[key][0]
+            source = f"field '{field}'" if field else f"the static {key} value"
+            examples = ', '.join(repr(v) for v in sorted(values)[:3])
+            self.warnings.append(f"Indoor climate: {len(values)} value(s) of {source} could not be read "
+                                 f"({examples}); those buildings use the simulation's setting.")
         QgsMessageLog.logMessage("Finished: Generating Building Info section.", 'ENVI-met', level=Qgis.MessageLevel.Info)
+
+    def _indoor_settings(self, feature, unreadable):
+        """The building's indoor climate values; values that cannot be read are collected in ``unreadable``."""
+        settings = {}
+        for key, (field, constant) in self.bIndoor.items():
+            value = constant if not field else feature.attribute(field)
+            if not indoor.PARSERS[key](value)[1]:
+                unreadable.setdefault(key, set()).add(str(value))
+                value = None
+            settings[key] = value
+        return settings
 
     def rasterBNumber(self):
         if self.bLayer_rot.name() == "notAvail":
@@ -2009,6 +2038,9 @@ class Worker(QObject):
             print("    <soilProfileB> 0200LO </soilProfileB>", file=output_file)
             print("  </nestingArea>", file=output_file)
 
+            for line in surrounding.section_lines(self.useSurroundingArea, self.surroundingBorders):
+                print(line, file=output_file)
+
             print("  <locationData>", file=output_file)
             print("    <modelRotation> " + str(-self.model_rot) + " </modelRotation>", file=output_file)
             print("    <projectionSystem> " + str(self.subAreaLayer.crs().authid()) + " </projectionSystem>", file=output_file)
@@ -2068,6 +2100,8 @@ class Worker(QObject):
                       file=output_file)
                 print("    <ObserveBPS> " + bld.BuildingBPS + " </ObserveBPS>",
                       file=output_file)
+                for line in indoor.tag_lines(bld.indoor, self.bSuppressACHeat):
+                    print(line, file=output_file)
                 print("  </Buildinginfo>", file=output_file)
 
             print("  <simpleplants2D>", file=output_file)

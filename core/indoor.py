@@ -1,0 +1,116 @@
+"""Per-building indoor climate of ENVI-met 6 (the <Buildinginfo> tags of the INX).
+
+A building without a value takes the model-wide setting of the simulation (SIMX):
+building use 0, indoor mode -1 and thresholds -99 mean "not stated". The internal
+heat gain is only read for buildings of use 3 ("other").
+
+Attribute values may be the codes or common words ("office", "residential", "AC",
+...), as GIS layers often carry text. Each parser returns (value, understood):
+``understood`` is False for a value that was given but could not be read, which
+then falls back to "not stated".
+
+No QGIS imports.
+"""
+
+USE_NOT_STATED = 0
+MODE_MODEL_DEFAULT = -1
+THRESHOLD_NOT_STATED = -99.0
+DEFAULT_INTERNAL_GAIN = 8.0
+
+# Combo box entries of the export page, in code order
+USE_LABELS = ['Not stated (simulation setting)', 'Residential (5 W/m2, 17:00-08:00)', 'Office (15 W/m2, 08:00-17:00)',
+              'Other (own internal heat gain)', 'Hall / single storey (4 W/m2, one floor)']
+MODE_LABELS = ['Not stated (simulation setting)', 'Free-running (no heating, no cooling)',
+               'Heated, windows can be opened', 'Mixed mode (windows first, cooling as backup)',
+               'Fully conditioned (AC: sealed, heated and cooled)']   # codes -1 .. 3
+
+_USE_WORDS = {
+    0: ('not stated', 'unknown', 'mixed', 'mixed use', 'default', 'none', 'unspecified'),
+    1: ('residential', 'residence', 'dwelling', 'housing', 'house', 'home', 'apartment', 'apartments', 'flat',
+        'flats', 'wohnen', 'wohngebaeude', 'wohngebäude'),
+    2: ('office', 'offices', 'commercial', 'administration', 'workplace', 'school', 'buero', 'büro', 'verwaltung'),
+    3: ('other', 'custom', 'own', 'own gain', 'internal gain'),
+    4: ('hall', 'warehouse', 'industrial', 'industry', 'factory', 'church', 'sports hall', 'gym', 'storage',
+        'single storey', 'single-storey', 'halle', 'lager'),
+}
+_MODE_WORDS = {
+    -1: ('not stated', 'default', 'model default', 'simulation', 'unknown'),
+    0: ('free', 'free-running', 'free running', 'free-floating', 'none', 'natural', 'unconditioned', 'off',
+        'passive'),
+    1: ('heated', 'heating', 'heat'),
+    2: ('mixed', 'mixed mode', 'mixed-mode', 'hybrid'),
+    3: ('ac', 'a/c', 'air conditioned', 'air-conditioned', 'conditioned', 'fully conditioned', 'cooled', 'cooling',
+        'hvac', 'sealed', 'klima', 'klimatisiert'),
+}
+
+
+def _empty(value):
+    return value is None or str(value).strip() in ('', 'NULL', 'None', 'nan')
+
+
+def _word_lookup(value, words, low, high, default):
+    if _empty(value):
+        return default, True
+    text = str(value).strip().lower()
+    try:
+        number = float(text)
+    except ValueError:
+        for code, names in words.items():
+            if text in names:
+                return code, True
+        return default, False
+    if number == int(number) and low <= number <= high:
+        return int(number), True
+    return default, False
+
+
+def building_use(value):
+    """Building use code 0..4 from a code or a word."""
+    return _word_lookup(value, _USE_WORDS, 0, 4, USE_NOT_STATED)
+
+
+def indoor_mode(value):
+    """Indoor mode code -1..3 from a code or a word."""
+    return _word_lookup(value, _MODE_WORDS, -1, 3, MODE_MODEL_DEFAULT)
+
+
+def _number(value, default, low, high, unset=None):
+    if _empty(value):
+        return default, True
+    try:
+        number = float(str(value).strip().replace(',', '.'))
+    except ValueError:
+        return default, False
+    if unset is not None and number == unset:
+        return default, True
+    if not low <= number <= high:
+        return default, False
+    return number, True
+
+
+def threshold(value):
+    """An indoor temperature threshold in degrees Celsius; empty or -99 is "not stated"."""
+    return _number(value, THRESHOLD_NOT_STATED, -50.0, 60.0, unset=THRESHOLD_NOT_STATED)
+
+
+def internal_gain(value):
+    """Internal heat gain in W per m2 of floor area (read by ENVI-met for use 3 only)."""
+    return _number(value, DEFAULT_INTERNAL_GAIN, 0.0, 1000.0)
+
+
+PARSERS = {'use': building_use, 'mode': indoor_mode, 'lower': threshold, 'upper': threshold, 'gain': internal_gain}
+
+TAGS = (('use', 'BuildingUse'), ('mode', 'BuildingIndoorMode'), ('lower', 'BuildingIndoorLower'),
+        ('upper', 'BuildingIndoorUpper'), ('gain', 'BuildingInternalGain'))
+
+
+def tag_lines(settings, suppress_ac_heat=False, indent='    '):
+    """The INX lines of one building's indoor climate. ``settings`` maps use/mode/lower/upper/gain to values."""
+    values = {key: PARSERS[key](settings.get(key))[0] for key, _ in TAGS}
+    lines = []
+    for key, tag in TAGS:
+        value = values[key]
+        text = str(int(value)) if key in ('use', 'mode') else f'{float(value):.2f}'
+        lines.append(f'{indent}<{tag}> {text} </{tag}>')
+    lines.append(f'{indent}<BuildingSuppressACHeat> {1 if suppress_ac_heat else 0} </BuildingSuppressACHeat>')
+    return lines

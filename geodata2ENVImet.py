@@ -1,9 +1,10 @@
 from qgis.PyQt.QtCore import QLocale, QTranslator, QCoreApplication, QThread, QTimer, Qt, QDate, QTime
 from qgis.PyQt import QtCore
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QDoubleValidator, QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
-from qgis.core import (Qgis, QgsApplication, QgsField, QgsGeometry, QgsMapLayerProxyModel, QgsVectorLayer,
-                       QgsFieldProxyModel, QgsRasterLayer, QgsSettings, QgsMessageLog)
+from qgis.core import (Qgis, QgsApplication, QgsDistanceArea, QgsField, QgsGeometry, QgsMapLayerProxyModel,
+                       QgsPointXY, QgsProject, QgsVectorLayer, QgsFieldProxyModel, QgsRasterLayer, QgsSettings,
+                       QgsMessageLog)
 
 # Initialize the bundled Qt resources (icons etc.); importing resources.py has
 # the side effect of calling qInitResources().
@@ -26,7 +27,10 @@ from .processing_provider.provider import EnvimetProvider
 from .core import envimet_install
 from .core.forcing import diurnal_profile
 from .core import simx as core_simx
+from .core import indoor as core_indoor
+from .core import surrounding as core_surrounding
 from . import simx_ui
+import math
 
 
 class Geo2ENVImet:
@@ -273,6 +277,9 @@ class Geo2ENVImet:
         # transfer subarea and gridding info
         self.worker.subAreaLayer = self.dlg.cb_subArea.currentLayer()
         self.worker.subAreaLayer_nonRot = self.dlg.cb_subArea.currentLayer()
+        self.worker.useSurroundingArea = self.dlg.chk_surroundingArea.isChecked()
+        self.worker.surroundingBorders = {border: getattr(self.dlg, f'cb_border{border}').currentIndex()
+                                          for border in core_surrounding.BORDERS}
         self.worker.dx = self.dlg.se_dx.value()
         self.worker.dy = self.dlg.se_dy.value()
         self.worker.dz = self.dlg.se_dz.value()
@@ -496,6 +503,25 @@ class Geo2ENVImet:
             self.worker.bBPS = QgsField("notAvail", FIELD_TYPE_STRING)
         else:
             self.worker.bBPS = self.dlg.cb_bBPS.currentField()
+        # indoor climate (ENVI-met 6): an attribute field or a static value per setting
+        self.worker.bIndoor = {}
+        for key, name in self.INDOOR_WIDGETS:
+            if getattr(self.dlg, f'chk_{name}').isChecked():
+                self.worker.bIndoor[key] = (None, self.indoor_static_value(key, name))
+            else:
+                self.worker.bIndoor[key] = (getattr(self.dlg, f'cb_{name}').currentField() or None, '')
+        self.worker.bSuppressACHeat = self.dlg.chk_bSuppressACHeat.isChecked()
+
+    # setting of core.indoor -> widget name suffix on the Buildings > Indoor Climate page
+    INDOOR_WIDGETS = (('use', 'bUse'), ('mode', 'bIndoorMode'), ('lower', 'bIndoorLower'),
+                      ('upper', 'bIndoorUpper'), ('gain', 'bInternalGain'))
+
+    def indoor_static_value(self, key, name):
+        if key == 'use':
+            return self.dlg.cmb_bUse.currentIndex()
+        if key == 'mode':
+            return self.dlg.cmb_bIndoorMode.currentIndex() - 1     # the first entry is -1, "not stated"
+        return getattr(self.dlg, f'le_{name}').text().strip()
 
     def kill_worker(self):
         # method to kill/cancel the worker thread
@@ -834,6 +860,8 @@ class Geo2ENVImet:
         self.dlg.cb_bRoof.setLayer(layerFields)
         self.dlg.cb_bName.setLayer(layerFields)
         self.dlg.cb_bBPS.setLayer(layerFields)
+        for _, name in self.INDOOR_WIDGETS:
+            getattr(self.dlg, f'cb_{name}').setLayer(layerFields)
         self.update_summary(self.dlg.cb_summary_buildings)
         self.update_model_height_info()
 
@@ -952,6 +980,46 @@ class Geo2ENVImet:
         else:
             self.iface.messageBar().pushMessage("Error", "Selected layer does not exist", level=Qgis.Warning)
         self.update_summary(self.dlg.cb_summary_gridding)
+
+    def update_surrounding_page(self):
+        """Border labels with the compass direction each border faces under the sub area's rotation."""
+        use = self.dlg.chk_surroundingArea.isChecked()
+        rotation = self.sub_area_rotation()
+        labels = core_surrounding.border_labels(rotation)
+        for border in core_surrounding.BORDERS:
+            label = getattr(self.dlg, f'lb_border{border}')
+            label.setText(labels[border])
+            label.setEnabled(use)
+            getattr(self.dlg, f'cb_border{border}').setEnabled(use)
+        if rotation is None:
+            text = 'Select a sub area to see which direction each border faces.'
+        else:
+            text = (f'The sub area is rotated by about {rotation:.0f}°; left, right, front and rear are the sides of '
+                    f'the model grid, the labels show where they face.')
+        self.dlg.lb_borderDirections.setText(text)
+
+    def sub_area_rotation(self):
+        """The model rotation the export will use (the bearing of the sub area's lower edge), or None."""
+        layer = self.dlg.cb_subArea.currentLayer()
+        if layer is None:
+            return None
+        try:
+            for feature in layer.getFeatures():
+                if not feature.hasGeometry():
+                    continue
+                # the export takes the edge from the first to the fourth vertex as the model's lower edge
+                vertices = list(feature.geometry().vertices())
+                if len(vertices) < 5:
+                    return None
+                distance = QgsDistanceArea()
+                distance.setSourceCrs(layer.crs(), QgsProject.instance().transformContext())
+                distance.setEllipsoid('WGS84')
+                bearing = math.degrees(distance.bearing(QgsPointXY(vertices[0].x(), vertices[0].y()),
+                                                        QgsPointXY(vertices[3].x(), vertices[3].y())))
+                return core_surrounding.rotation_from_bearing(bearing)
+        except Exception:       # an unusable layer or CRS: no directions, the export reports the problem
+            return None
+        return None
 
     def start_db_manager(self):
         if self.enviProjects is not None:
@@ -1810,6 +1878,28 @@ class Geo2ENVImet:
         self.dlg.cb_srcLID.setFilters(QgsFieldProxyModel.String)
         self.dlg.cb_srcAID.setFilters(QgsFieldProxyModel.String)
 
+        # indoor climate per building (ENVI-met 6); text and number fields both work
+        self.dlg.cmb_bUse.addItems(core_indoor.USE_LABELS)
+        self.dlg.cmb_bIndoorMode.addItems(core_indoor.MODE_LABELS)
+        self.dlg.le_bIndoorLower.setValidator(QDoubleValidator(-50.0, 60.0, 2, self.dlg))
+        self.dlg.le_bIndoorUpper.setValidator(QDoubleValidator(-50.0, 60.0, 2, self.dlg))
+        self.dlg.le_bInternalGain.setValidator(QDoubleValidator(0.0, 1000.0, 2, self.dlg))
+        for _, name in self.INDOOR_WIDGETS:
+            getattr(self.dlg, f'cb_{name}').setAllowEmptyFieldName(True)
+            getattr(self.dlg, f'cb_{name}').fieldChanged.connect(
+                lambda *_: self.update_summary(self.dlg.cb_summary_buildings))
+            getattr(self.dlg, f'chk_{name}').clicked.connect(
+                lambda *_: self.update_summary(self.dlg.cb_summary_buildings))
+
+        # surrounding area (ENVI-met 6)
+        for border in core_surrounding.BORDERS:
+            box = getattr(self.dlg, f'cb_border{border}')
+            box.addItems(core_surrounding.TYPES)
+            box.setCurrentIndex(core_surrounding.DEFAULT_TYPE)
+        self.dlg.chk_surroundingArea.toggled.connect(lambda *_: self.update_surrounding_page())
+        self.dlg.cb_subArea.layerChanged.connect(lambda *_: self.update_surrounding_page())
+        self.update_surrounding_page()
+
         self.dlg.cb_buildingLayer.layerChanged.connect(self.select_cb_buildingClick)
         self.dlg.cb_surfLayer.layerChanged.connect(self.select_cb_surfClick)
         self.dlg.cb_simplePlantLayer.layerChanged.connect(self.select_cb_simplePlantClick)
@@ -1972,7 +2062,9 @@ class Geo2ENVImet:
                     or ((self.dlg.cb_bWall.currentField() == "") and not (self.dlg.chk_bWall.isChecked())) \
                     or ((self.dlg.cb_bRoof.currentField() == "") and not (self.dlg.chk_bRoof.isChecked())) \
                     or ((self.dlg.cb_bName.currentField() == "") and not (self.dlg.chk_bName.isChecked())) \
-                    or ((self.dlg.cb_bBPS.currentField() == "") and not (self.dlg.chk_bBPS.isChecked())):
+                    or ((self.dlg.cb_bBPS.currentField() == "") and not (self.dlg.chk_bBPS.isChecked())) \
+                    or any(getattr(self.dlg, f'cb_{name}').currentField() == ""
+                           and not getattr(self.dlg, f'chk_{name}').isChecked() for _, name in self.INDOOR_WIDGETS):
                 # unchecked = 0
                 summary_checkBox.setCheckState(Qt.CheckState.Unchecked)
             else:
