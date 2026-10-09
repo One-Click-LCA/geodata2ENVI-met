@@ -136,7 +136,10 @@ class _AreaAlgorithm(QgsProcessingAlgorithm):
                 f'columns their ...Biomet fields lie at another level than the pedestrian cells used here.')
         masks = []
         for zone in zones:
-            mask = core_zones.build_mask(grid, zone, static, mode, z_min, z_max)
+            try:
+                mask = core_zones.build_mask(grid, zone, static, mode, z_min, z_max)
+            except ValueError as error:
+                raise QgsProcessingException(str(error))
             if not len(mask):
                 feedback.pushWarning(f'Area {zone.zone_id} ({zone.name}) has no atmosphere cells in the model area.')
             masks.append(mask)

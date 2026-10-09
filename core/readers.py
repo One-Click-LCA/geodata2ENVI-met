@@ -184,6 +184,7 @@ class ResultFile:
         self.grid = None
         self.times = []
         self.variables = {}
+        self.first_index = 0      # first time index with data; static fields are read there
 
     def close(self):
         pass
@@ -213,7 +214,7 @@ class ResultFile:
         keys = [key for key, v in self.variables.items() if v.kind == KIND_2D and key != 'Objects']
         if not keys:
             return None
-        data, _ = self.read(keys[0], 0)
+        data, _ = self.read(keys[0], self.first_index)
         return ~np.isnan(data)
 
     def _terrain_following(self, read_levels, time_index, height):
@@ -267,6 +268,7 @@ class NetcdfFile(ResultFile):
         # (some runs left the first one at the netCDF fill value)
         self.times = [round_to_minute(start + dt.timedelta(hours=float(h)))
                       if np.isfinite(h) and 0 <= h < 1e6 else None for h in hours]
+        self.first_index = next((n for n, moment in enumerate(self.times) if moment is not None), 0)
 
         for name, var in ds.variables.items():
             if name in NETCDF_COORDINATES:
@@ -370,21 +372,23 @@ class NetcdfFile(ResultFile):
         from .zones import StaticFields
         variables = self._ds.variables
         objects = biomet = air = None
+        # from the first time step that was written: a record left at the fill value has no objects
+        first = self.first_index
         if 'Objects' in variables and 'GridsK' in variables['Objects'].dimensions:
             var = variables['Objects']
-            objects = np.array(var[self._time_slice(var, 0)])
+            objects = np.array(var[self._time_slice(var, first)])
         elif 'Objects' in variables:
             # 2D module reports: 0 open, 1 building at the pedestrian node
             var = variables['Objects']
-            air = np.array(var[self._time_slice(var, 0)]) == 0
+            air = np.array(var[self._time_slice(var, first)]) == 0
         else:
             air = self._air_2d()
         if objects is not None and 'ZNodeBiomet' in variables:
             var = variables['ZNodeBiomet']
-            node = np.array(var[self._time_slice(var, 0)], dtype=float)
+            node = np.array(var[self._time_slice(var, first)], dtype=float)
             if np.all(node >= 1):
                 biomet = np.rint(node).astype(int) - 1
-        return StaticFields(self.dem_offset(0), self.grid.dz if self.grid.dz is not None else [1.0],
+        return StaticFields(self.dem_offset(first), self.grid.dz if self.grid.dz is not None else [1.0],
                             objects=objects, reported_biomet_k=biomet, air_2d=air,
                             has_levels=any(v.kind == KIND_3D for v in self.variables.values()))
 
@@ -418,6 +422,22 @@ def read_edx_header(path):
     for match in re.finditer(r'<([A-Za-z0-9_\-]+)>([^<]*)</\1>', text):
         tags.setdefault(match.group(1), match.group(2).strip())
     return tags
+
+
+def _edt_partner(path):
+    """The EDT file of an EDX file, whatever the case of its extension (file systems may be case-sensitive)."""
+    base, extension = os.path.splitext(path)
+    first = '.EDT' if extension == '.EDX' else '.edt'
+    for candidate in (base + first, base + first.swapcase()):
+        if os.path.exists(candidate):
+            return candidate
+    folder, stem = os.path.split(base)
+    try:
+        names = os.listdir(folder or '.')
+    except OSError:
+        names = []
+    found = [n for n in names if os.path.splitext(n)[0] == stem and os.path.splitext(n)[1].lower() == '.edt']
+    return os.path.join(folder, found[0]) if found else base + first
 
 
 def _core_slice(spacing):
@@ -469,8 +489,7 @@ class EdxFile(ResultFile):
                 continue
             self._index[key] = index
             self.variables[key] = Variable(key, key, units, kind)
-        base, _ = os.path.splitext(path)
-        self.edt_path = base + ('.EDT' if path.endswith('.EDX') else '.edt')
+        self.edt_path = _edt_partner(path)
         self._dem = None
 
     def _read_levels(self, index, k0, k1):

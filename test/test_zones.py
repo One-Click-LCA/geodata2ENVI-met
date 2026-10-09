@@ -138,6 +138,26 @@ class MaskTest(unittest.TestCase):
         tj, ti = fx.TERRAIN_COLUMN
         self.assertEqual(mask.k[(mask.j == tj) & (mask.i == ti)].tolist(), [2])
 
+    def test_height_range_needs_3d_results(self):
+        """2D-only results have no levels: a height range (a volume) is refused, not made a 2D mask."""
+        flat = self.zones.StaticFields(np.zeros((fx.NY, fx.NX), dtype=int), [1.0])
+        with self.assertRaises(ValueError):
+            self.zones.build_mask(self.nc.grid, self.whole_area(), flat, mode=self.zones.MODE_RANGE,
+                                  z_min=0.0, z_max=3.0)
+        self.assertEqual(len(self.zones.build_mask(self.nc.grid, self.whole_area(), flat)), fx.NX * fx.NY)
+
+    def test_first_record_never_written(self):
+        """Static fields come from the first written time step, not from a record left at the fill values."""
+        path = fx.write_netcdf(os.path.join(self.tmp, 'unwritten', 'sim_001.nc'), first_unwritten=True)
+        nc = self.readers.NetcdfFile(path)
+        self.addCleanup(nc.close)
+        self.assertEqual((nc.times[0], nc.first_index), (None, 1))
+        static = nc.static_fields()
+        np.testing.assert_array_equal(static.objects, self.static.objects)
+        np.testing.assert_array_equal(static.dem, self.static.dem)
+        mask = self.zones.build_mask(nc.grid, self.whole_area(), static)
+        self.assertNotIn(fx.BUILDING_COLUMN, set(zip(mask.j.tolist(), mask.i.tolist())))
+
 
 class StatsTest(unittest.TestCase):
 

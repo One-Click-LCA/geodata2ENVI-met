@@ -263,6 +263,10 @@ def cell_fractions(grid, zone):
 
 def build_mask(grid, zone, static, mode=MODE_PEDESTRIAN, z_min=0.0, z_max=0.0):
     """The cells of ``zone``: horizontal fractions times the vertical selection, atmosphere only."""
+    if mode == MODE_RANGE and not static.is_3d:
+        # a height range is a volume: 2D-only results have no levels to take it from
+        raise ValueError('These results have no 3D atmosphere data: a height range needs it; '
+                         'use the pedestrian level.')
     j, i, fraction = cell_fractions(grid, zone)
     dx, dy = float(grid.dx[0]), float(grid.dy[0])
     if not static.is_3d or mode == MODE_PEDESTRIAN:

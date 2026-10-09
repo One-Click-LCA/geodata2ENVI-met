@@ -66,11 +66,12 @@ def cell_centres(x0=X0, y0=Y0, rotation=ROTATION, nx=NX, ny=NY, dx=DX):
 
 
 def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitude=LATITUDE, dz=None,
-                 with_objects=True):
+                 with_objects=True, first_unwritten=False):
     """An ENVI-met main output file; ``layout='old'`` mimics files from before the CF update.
 
     ``dz``: other level thicknesses (as many as DZ), for a run with another vertical grid.
     ``with_objects=False``: 3D data without an Objects field, as in some report files.
+    ``first_unwritten=True``: the first time record was never written (left at the fill values).
     """
     import netCDF4
     dz = DZ if dz is None else dz
@@ -99,6 +100,9 @@ def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitu
         if layout == 'old':
             time.units = 'Hours since 2024-07-06 04:00:00 1'
             time[:] = [0.0, 0.9994444]
+        elif first_unwritten:
+            time.units = 'hours since 2024-07-06 04:00:00'
+            time[1] = 1.0
         else:
             time.units = 'hours since 2024-07-06 04:00:00'
             time[:] = [0.0, 1.0]
@@ -148,7 +152,7 @@ def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitu
         wy = data_var('WallTempY', 'Wall Temperature', ('Time', 'GridsK', 'GridsJ', 'GridsI'), units=celsius)
         pet = data_var('PET', 'PET (Default Person)', ('Time', 'GridsJ', 'GridsI'), units=celsius)
         soil_t = data_var('SoilTemp', 'Soil Temperature', ('Time', 'SoilLevels', 'GridsJ', 'GridsI'), units=celsius)
-        for step in range(2):
+        for step in range(1 if first_unwritten else 0, 2):
             dem[step] = dem_offset()
             if objects is not None:
                 objects[step] = objects_field()

@@ -164,6 +164,19 @@ class EdxReaderTest(unittest.TestCase):
             self.assertEqual(desc_a, desc_b)
             np.testing.assert_array_equal(a, b)
 
+    def test_edt_partner_in_another_case(self):
+        """step.edx with step.Edt: the partner is found by name, whatever the case of its extension."""
+        folder = os.path.join(self.tmp, 'mixed_case')
+        path = fx.write_edx(folder)
+        stem = os.path.splitext(path)[0]
+        os.rename(path, stem + '.edx')
+        os.rename(stem + '.EDT', stem + '.Edt')
+        edx = self.r.EdxFile(stem + '.edx')
+        self.assertTrue(os.path.exists(edx.edt_path))
+        data, _ = edx.read('Air Temperature', height=1.0)
+        reference, _ = self.r.EdxFile(self.edx).read('Air Temperature', height=1.0)
+        np.testing.assert_array_equal(data, reference)
+
     def test_soil_files_have_depths_not_heights(self):
         """EDX soil output (data_content 3): the levels are soil layers, as in the NetCDF's SoilLevels."""
         soil = self.r.EdxFile(fx.write_soil_edx(os.path.join(self.tmp, 'soil')))
