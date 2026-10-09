@@ -1,11 +1,13 @@
 """The Create simulation tab and the content of a SIMX file (core.simx), in both directions."""
 
 import copy
+import os
 from collections import OrderedDict
 
 import numpy as np
 from qgis.PyQt.QtCore import QDate, Qt, QTime
 
+from .core import modules
 from .core import simx as core_simx
 
 # The UI works in degrees Celsius, ENVI-met in Kelvin (offset as the plugin always used it).
@@ -32,8 +34,11 @@ def _checked(button):
     return button.isChecked()
 
 
-def model_from_ui(dlg, base=None, json_format=True):
-    """The simulation as shown in the tab. ``base`` is a loaded simulation whose other settings are kept."""
+def model_from_ui(dlg, base=None, json_format=True, fox_name=None):
+    """The simulation as shown in the tab. ``base`` is a loaded simulation whose other settings are kept.
+
+    ``fox_name`` is the name a module's FOX file is saved under; by default the selected file's name.
+    """
     simulation = copy.deepcopy(base) if base else OrderedDict()
     simulation.pop('Header', None)
 
@@ -45,7 +50,37 @@ def model_from_ui(dlg, base=None, json_format=True):
                 startTime=f'{qtime.hour():02d}:{qtime.minute():02d}:00', simDuration=dlg.sb_simDur.value())
     simulation['Parallel'] = OrderedDict(CPUDemand='ALL' if _checked(dlg.rb_multiCore) else '1')
 
-    # meteorology: one of simple forcing, full forcing and open/cyclic boundaries
+    code = simulation_type(dlg)
+    if code == modules.HOLISTIC:
+        simulation.pop('SimModule', None)
+        _meteorology(dlg, simulation, main, json_format)
+        _optional_sections(dlg, simulation, json_format)
+    else:
+        # a module run reads mainData and SimModule only
+        for section in modules.UNUSED_SECTIONS:
+            simulation.pop(section, None)
+        if code in modules.CODES:
+            simulation['SimModule'] = modules.build_section(code, module_values(dlg, fox_name),
+                                                            simulation.get('SimModule'))
+        # any other module comes from a loaded file the plugin cannot edit and stays as it was
+
+    if json_format:
+        for section in core_simx.RETIRED_V6['sections']:
+            simulation.pop(section, None)
+        for section, keys in core_simx.RETIRED_V6['keys'].items():
+            for key in keys:
+                if isinstance(simulation.get(section), dict):
+                    simulation[section].pop(key, None)
+    else:
+        # ENVI-met up to 5.8 still reads these; they are not on the pages any more
+        main.setdefault('T_H', 293.15)
+        main.setdefault('Q_H', 8.0)
+        main.setdefault('Q_2m', 50.0)
+    return simulation
+
+
+def _meteorology(dlg, simulation, main, json_format):
+    """One of simple forcing, full forcing and open/cyclic boundaries."""
     loaded_full = simulation.get('FullForcing')
     for section in ('SimpleForcing', 'FullForcing', 'LBC', 'Clouds'):
         simulation.pop(section, None)
@@ -89,7 +124,8 @@ def model_from_ui(dlg, base=None, json_format=True):
             TAir=[float(table.item(hour, 0).text()) + KELVIN_OFFSET for hour in range(24)],
             Qrel=[float(table.item(hour, 1).text()) for hour in range(24)])
 
-    # optional sections
+
+def _optional_sections(dlg, simulation, json_format):
     _optional(simulation, dlg.chk_soilSim.isChecked(), ['Soil'], lambda: _soil(dlg, simulation, json_format))
     _optional(simulation, dlg.chk_buildingsSim.isChecked(), ['indoorSettings', 'Building'],
               lambda: _indoor(dlg, simulation, json_format))
@@ -99,20 +135,6 @@ def model_from_ui(dlg, base=None, json_format=True):
               lambda: _radiation(dlg, simulation))
     _optional(simulation, dlg.chk_outputSim.isChecked(), ['OutputSettings'], lambda: _output(dlg, simulation))
     _optional(simulation, dlg.chk_expertSim.isChecked(), ['TThread'], lambda: _expert(dlg, simulation))
-
-    if json_format:
-        for section in core_simx.RETIRED_V6['sections']:
-            simulation.pop(section, None)
-        for section, keys in core_simx.RETIRED_V6['keys'].items():
-            for key in keys:
-                if isinstance(simulation.get(section), dict):
-                    simulation[section].pop(key, None)
-    else:
-        # ENVI-met up to 5.8 still reads these; they are not on the pages any more
-        main.setdefault('T_H', 293.15)
-        main.setdefault('Q_H', 8.0)
-        main.setdefault('Q_2m', 50.0)
-    return simulation
 
 
 def _optional(simulation, enabled, sections, fill):
@@ -190,11 +212,159 @@ def _expert(dlg, simulation):
 
 
 # --------------------------------------------------------------------------------------------
+# Simulation type and modules
+# --------------------------------------------------------------------------------------------
+
+MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
+          'November', 'December']
+# ENVI-guide's defaults for the statistics period: June to September, 06:00 to 20:00
+STATS_DEFAULTS = {'startMonth': 6, 'endMonth': 9, 'startHour': 6, 'endHour': 20}
+
+OPTIONAL_TABS = (('chk_soilSim', 'tab_Soil'), ('chk_radiationSim', 'tab_Radiation'),
+                 ('chk_buildingsSim', 'tab_Buildings_2'), ('chk_pollutantsSim', 'tab_Pollutants'),
+                 ('chk_outputSim', 'tab_Output'), ('chk_expertSim', 'tab_Expert'))
+
+
+def setup_module_widgets(dlg):
+    """Fill the simulation type and module combo boxes (once, when the dialog is built)."""
+    for code, text in modules.CHOICES:
+        dlg.cb_simType.addItem(text, code)
+    for box in (dlg.cb_statsStartMonth, dlg.cb_statsEndMonth):
+        box.addItems(MONTHS)
+    for box in (dlg.cb_statsStartHour, dlg.cb_statsEndHour):
+        box.addItems([f'{hour:02d}:00' for hour in range(24)])
+
+
+def clear_module_page(dlg):
+    while dlg.cb_simType.count() > len(modules.CHOICES):       # a module kept from a loaded file
+        dlg.cb_simType.removeItem(dlg.cb_simType.count() - 1)
+    dlg.cb_simType.setCurrentIndex(0)
+    dlg.de_solarDate.setDate(QDate(QDate.currentDate().year(), 7, 1))
+    dlg.lw_solarDates.clear()
+    dlg.sb_moduleWindDir.setValue(90)
+    dlg.sb_moduleWindSpeed.setValue(2.0)
+    dlg.le_moduleFox.setText('')
+    dlg.chk_moduleAverageWind.setChecked(False)
+    _set_stats_period(dlg, STATS_DEFAULTS)
+
+
+def _set_stats_period(dlg, values):
+    def index(key, low, high):
+        try:
+            value = int(values.get(key, STATS_DEFAULTS[key]))
+        except (TypeError, ValueError):
+            value = STATS_DEFAULTS[key]
+        return min(max(value, low), high)
+    dlg.cb_statsStartMonth.setCurrentIndex(index('startMonth', 1, 12) - 1)
+    dlg.cb_statsEndMonth.setCurrentIndex(index('endMonth', 1, 12) - 1)
+    dlg.cb_statsStartHour.setCurrentIndex(index('startHour', 0, 23))
+    dlg.cb_statsEndHour.setCurrentIndex(index('endHour', 0, 23))
+
+
+def simulation_type(dlg):
+    return dlg.cb_simType.currentData() or modules.HOLISTIC
+
+
+def is_module(dlg):
+    return simulation_type(dlg) != modules.HOLISTIC
+
+
+def solar_dates(dlg):
+    return [dlg.lw_solarDates.item(row).text() for row in range(dlg.lw_solarDates.count())]
+
+
+def add_solar_dates(dlg, dates):
+    present = set(solar_dates(dlg))
+    for date in dates:
+        if date not in present:
+            dlg.lw_solarDates.addItem(date)
+            present.add(date)
+
+
+def module_values(dlg, fox_name=None):
+    """ModuleData values shown on the Module page. ``fox_name`` replaces the selected FOX file's path."""
+    code = simulation_type(dlg)
+    fox = dlg.le_moduleFox.text().strip()
+    fox = fox_name if fox_name is not None else os.path.basename(fox)
+    if code == modules.SOLAR_ACCESS:
+        return {'solarAccessDates': ','.join(solar_dates(dlg))}
+    if code == modules.WIND_FLOW:
+        return {'windSpeed': float(dlg.sb_moduleWindSpeed.value()), 'windDir': int(dlg.sb_moduleWindDir.value())}
+    if code == modules.WIND_COMFORT:
+        return {'forcingFile': fox}
+    if code == modules.FAST_UTCI:
+        return {'forcingFile': fox, 'useAverageWindFromForcing': dlg.chk_moduleAverageWind.isChecked()}
+    if code == modules.FAST_UTCI_STATS:
+        return {'forcingFile': fox, 'startMonth': dlg.cb_statsStartMonth.currentIndex() + 1,
+                'endMonth': dlg.cb_statsEndMonth.currentIndex() + 1,
+                'startHour': dlg.cb_statsStartHour.currentIndex(), 'endHour': dlg.cb_statsEndHour.currentIndex()}
+    return {}
+
+
+def module_problems(dlg):
+    """What keeps the selected module from running (empty for the holistic simulation)."""
+    code = simulation_type(dlg)
+    if code not in modules.CODES:
+        return []
+    return modules.problems(code, module_values(dlg, fox_name=dlg.le_moduleFox.text().strip()))
+
+
+def update_module_page(dlg):
+    """Show the selected module's page; a module run does not use the meteorology or the advanced settings."""
+    code = simulation_type(dlg)
+    module = code != modules.HOLISTIC
+    dlg.sw_module.setCurrentIndex(modules.CODES.index(code) if code in modules.CODES else 0)
+    dlg.gb_moduleFox.setVisible(code in modules.FOX_MODULES)
+    dlg.tab_Module.setEnabled(module)
+    dlg.tab_Meteo.setEnabled(not module)
+    dlg.gb_optional.setEnabled(not module)
+    update_optional_tabs(dlg)
+
+
+def update_optional_tabs(dlg):
+    module = is_module(dlg)
+    for check, tab in OPTIONAL_TABS:
+        getattr(dlg, tab).setEnabled(getattr(dlg, check).isChecked() and not module)
+
+
+def _show_module(dlg, simulation, simx_dir):
+    """Select the simulation's type and fill the Module page. Returns notes."""
+    code = modules.module_name(simulation)
+    data = modules.module_data(simulation)
+    index = dlg.cb_simType.findData(code)
+    if index < 0:
+        dlg.cb_simType.addItem(f'Module {code} (from the loaded file, kept unchanged)', code)
+        index = dlg.cb_simType.count() - 1
+    dlg.cb_simType.setCurrentIndex(index)
+    if code not in modules.CODES:
+        return [f'The file sets up the ENVI-met module {code}, which the plugin cannot edit; saving keeps it '
+                f'unchanged unless you choose another simulation type.']
+    if code == modules.SOLAR_ACCESS:
+        add_solar_dates(dlg, modules.solar_dates(data.get('solarAccessDates', '')))
+    elif code == modules.WIND_FLOW:
+        _set(dlg.sb_moduleWindSpeed, data.get('windSpeed'))
+        _set_int(dlg.sb_moduleWindDir, data.get('windDir'))
+    if code in modules.FOX_MODULES:
+        fox = str(data.get('forcingFile', '') or '')
+        if fox and simx_dir and not os.path.isabs(fox):
+            fox = os.path.join(simx_dir, fox)      # ENVI-guide keeps the FOX next to the SIMX
+        dlg.le_moduleFox.setText(fox)
+    if code == modules.FAST_UTCI:
+        dlg.chk_moduleAverageWind.setChecked(bool(data.get('useAverageWindFromForcing', False)))
+    if code == modules.FAST_UTCI_STATS:
+        _set_stats_period(dlg, data)
+    return []
+
+
+# --------------------------------------------------------------------------------------------
 # File -> tab
 # --------------------------------------------------------------------------------------------
 
-def ui_from_model(dlg, simulation):
-    """Show a simulation in the tab. Returns notes about settings the tab cannot show."""
+def ui_from_model(dlg, simulation, simx_dir=None):
+    """Show a simulation in the tab. Returns notes about settings the tab cannot show.
+
+    ``simx_dir`` is the loaded file's folder, against which a module's FOX file name is resolved.
+    """
     notes = []
     main = simulation.get('mainData', {})
     date = QDate.fromString(str(main.get('startDate', '')), 'dd.MM.yyyy')
@@ -310,9 +480,7 @@ def ui_from_model(dlg, simulation):
     retired = [s for s in ('Turbulence', 'SOR', 'Facades', 'InflowAvg') if s in simulation]
     if retired:
         notes.append(f'Not used by ENVI-met 6 and left out when saving: {", ".join(retired)}.')
-    if 'SimModule' in simulation:
-        module = simulation['SimModule'].get('name', '') if isinstance(simulation['SimModule'], dict) else ''
-        notes.append(f'The file sets up the ENVI-met module "{module}"; it is kept when saving.')
+    notes += _show_module(dlg, simulation, simx_dir)
     return notes
 
 

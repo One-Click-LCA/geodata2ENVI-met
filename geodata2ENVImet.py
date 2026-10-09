@@ -28,9 +28,11 @@ from .core import envimet_install
 from .core.forcing import diurnal_profile
 from .core import simx as core_simx
 from .core import indoor as core_indoor
+from .core import modules as core_modules
 from .core import surrounding as core_surrounding
 from . import simx_ui
 import math
+import shutil
 
 
 class Geo2ENVImet:
@@ -768,7 +770,7 @@ class Geo2ENVImet:
         self.clear_settings_create_sim_tab()
         try:
             simulation, _ = core_simx.read(filepath)
-            notes = simx_ui.ui_from_model(self.dlg, simulation)
+            notes = simx_ui.ui_from_model(self.dlg, simulation, os.path.dirname(filepath))
             self.loaded_simx = simulation
             self.after_simx_import(filepath)
         except Exception as error:
@@ -796,9 +798,43 @@ class Geo2ENVImet:
         # update optional UI sections
         if self.dlg.chk_pollutantsSim.isChecked():
             self.pollutants_ui_update()
+        self.update_simulation_type()
         # enable UI
         self.dlg.tw_Main.setEnabled(True)
         self.dlg.lb_loadedSimx.setText(filename)
+
+    # ------------------------------------------------------------------ simulation type and modules
+    def update_simulation_type(self):
+        simx_ui.update_module_page(self.dlg)
+        if simx_ui.is_module(self.dlg):
+            self.update_module_status()
+        else:
+            self.dlg.cb_meteo.setText('Meteorology')
+            self.select_forcing_mode()
+
+    def update_module_status(self):
+        """The Overview's status line for a module: ready, or what is missing."""
+        if not simx_ui.is_module(self.dlg):
+            return
+        problems = simx_ui.module_problems(self.dlg)
+        self.dlg.cb_meteo.setText('Module settings')
+        self.dlg.lb_meteorology.setText(problems[0] if problems else 'Module selected')
+        self.dlg.cb_meteo.setCheckState(Qt.CheckState.Unchecked if problems else Qt.CheckState.Checked)
+
+    def add_solar_dates(self, dates):
+        simx_ui.add_solar_dates(self.dlg, dates)
+        self.update_module_status()
+
+    def remove_solar_date(self):
+        for item in self.dlg.lw_solarDates.selectedItems():
+            self.dlg.lw_solarDates.takeItem(self.dlg.lw_solarDates.row(item))
+        self.update_module_status()
+
+    def select_module_fox(self):
+        filename, _filter = QFileDialog.getOpenFileName(
+            self.dlg, "Select the meteorological data (FOX file) for the module", "", '*.FOX')
+        if filename != "":
+            self.dlg.le_moduleFox.setText(filename)
 
     def select_output_folder(self):
         folder = QFileDialog.getExistingDirectory(
@@ -1380,15 +1416,26 @@ class Geo2ENVImet:
         self.dlg.cb_meteo.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.dlg.cb_meteo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
+        simx_ui.setup_module_widgets(self.dlg)
         self.clear_settings_create_sim_tab()
 
         # connect events
-        self.dlg.chk_soilSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Soil))
-        self.dlg.chk_radiationSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Radiation))
-        self.dlg.chk_buildingsSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Buildings_2))
-        self.dlg.chk_pollutantsSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Pollutants))
-        self.dlg.chk_outputSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Output))
-        self.dlg.chk_expertSim.stateChanged.connect(lambda: self.switch_enabled_tab(self.dlg.tab_Expert))
+        # an advanced settings tab is usable while its section is included (and no module is chosen)
+        for check, _ in simx_ui.OPTIONAL_TABS:
+            getattr(self.dlg, check).stateChanged.connect(lambda *_: simx_ui.update_optional_tabs(self.dlg))
+
+        # simulation type and modules (ENVI-met 6)
+        self.dlg.cb_simType.currentIndexChanged.connect(lambda *_: self.update_simulation_type())
+        self.dlg.bt_addSolarDate.clicked.connect(
+            lambda: self.add_solar_dates([self.dlg.de_solarDate.date().toString('dd.MM.yyyy')]))
+        self.dlg.bt_addSolstices.clicked.connect(
+            lambda: self.add_solar_dates(core_modules.solstices_and_equinoxes(self.dlg.de_solarDate.date().year())))
+        self.dlg.bt_removeSolarDate.clicked.connect(self.remove_solar_date)
+        self.dlg.bt_moduleFox.clicked.connect(self.select_module_fox)
+        self.dlg.le_moduleFox.textChanged.connect(lambda *_: self.update_module_status())
+        for box in (self.dlg.cb_statsStartMonth, self.dlg.cb_statsEndMonth, self.dlg.cb_statsStartHour,
+                    self.dlg.cb_statsEndHour):
+            box.currentIndexChanged.connect(lambda *_: self.update_module_status())
 
         self.dlg.bt_fileExpl.clicked.connect(lambda: self.select_output_file('SIMX'))
         self.dlg.bt_inxForSim.clicked.connect(self.select_inx_input)
@@ -1503,11 +1550,14 @@ class Geo2ENVImet:
         version_text = 'unknown' if version is None else '.'.join(str(v) for v in version)
         QgsMessageLog.logMessage(f"Starting ENVI-met {version_text}: {subprocess.list2cmdline(command)}",
                                  'ENVI-met', level=Qgis.MessageLevel.Info)
+        # ENVI-met opens a module's FOX file by the bare name in the SIMX, from the folder it runs in;
+        # ENVI-guide keeps that file next to the SIMX
+        run_folder = os.path.dirname(os.path.abspath(simx_file))
         try:
             if os.name == 'nt':  # Check if running on Windows
-                subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                subprocess.Popen(command, cwd=run_folder, creationflags=subprocess.CREATE_NEW_CONSOLE)
             else:  # Fallback for non-Windows environments
-                subprocess.Popen(command)
+                subprocess.Popen(command, cwd=run_folder)
         except OSError as error:
             self.iface.messageBar().pushMessage("Error", f"Could not start ENVI-met: {error}", level=Qgis.Warning)
 
@@ -1524,7 +1574,12 @@ class Geo2ENVImet:
         if not self.dlg.cb_generalSettings.isChecked():
             self.iface.messageBar().pushMessage("Error", "General Settings are not defined", level=Qgis.Warning)
             return
-        if not self.dlg.cb_meteo.isChecked():
+        module = simx_ui.simulation_type(self.dlg) if simx_ui.is_module(self.dlg) else None
+        problems = simx_ui.module_problems(self.dlg) if module else []
+        if problems:
+            self.iface.messageBar().pushMessage("Error", problems[0], level=Qgis.Warning)
+            return
+        if not module and not self.dlg.cb_meteo.isChecked():
             self.iface.messageBar().pushMessage("Error", "Meteorology is not defined", level=Qgis.Warning)
             return
         if self.dlg.le_simxDest.text().isspace() or (self.dlg.le_simxDest.text() == ""):
@@ -1533,10 +1588,24 @@ class Geo2ENVImet:
 
         # JSON for ENVI-met 5.9 and newer (and when no installation is found), XML for older versions
         version = self.installed_envimet_version()
+        if module and version is not None and tuple(version) < core_modules.MIN_VERSION:
+            self.iface.messageBar().pushMessage(
+                "Error", "The simulation modules need ENVI-met 6.0 or newer; the installed version is "
+                         + '.'.join(str(v) for v in version) + ".", level=Qgis.Warning)
+            return
         json_format = core_simx.uses_json(version)
         path = self.dlg.le_simxDest.text().strip()
         try:
-            simulation = simx_ui.model_from_ui(self.dlg, base=self.loaded_simx, json_format=json_format)
+            fox_name = None
+            if module in core_modules.FOX_MODULES:
+                # ENVI-met opens the FOX by its bare name: keep a copy next to the SIMX, as ENVI-guide does
+                fox_name = core_modules.fox_file_name(path, module)
+                source = self.dlg.le_moduleFox.text().strip()
+                target = os.path.join(os.path.dirname(os.path.abspath(path)), fox_name)
+                if os.path.normcase(os.path.abspath(source)) != os.path.normcase(target):
+                    shutil.copyfile(source, target)
+            simulation = simx_ui.model_from_ui(self.dlg, base=self.loaded_simx, json_format=json_format,
+                                               fox_name=fox_name)
             if json_format:
                 core_simx.write_json(path, simulation)
             else:
@@ -1644,10 +1713,6 @@ class Geo2ENVImet:
             self.dlg.stackedWidget_3.setCurrentIndex(2)
             self.dlg.lb_meteorology.setText(self.meteoSettings_states[3])
             self.dlg.cb_meteo.setCheckState(Qt.CheckState.Checked)
-
-    @staticmethod
-    def switch_enabled_tab(tab):
-        tab.setEnabled(not tab.isEnabled())
 
     def clear_settings_create_sim_tab(self):
         # clears the settings in the Create ENVI-met simulation tab
@@ -1789,11 +1854,14 @@ class Geo2ENVImet:
         # Expert
         self.dlg.rb_threadingMain.setChecked(True)
 
+        # Simulation type and Module page
+        simx_ui.clear_module_page(self.dlg)
+
         # nothing loaded: a saved file only holds what the tab shows
         self.loaded_simx = None
 
         # trigger update event for meteo-settings
-        self.select_forcing_mode()
+        self.update_simulation_type()
 
     def update_temp_and_hum_simpleforcing(self):
         # linear interpolation between the daily extremes; table row = hour, column 0 = T, 1 = rel. humidity

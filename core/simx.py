@@ -76,6 +76,15 @@ TYPES = {
     'Facades': {'FacadeMode': INT},
 }
 
+# Keys of SimModule/ModuleData (JSON); the XML format keeps them flat in <SimModule> next to <name>
+MODULE_DATA_TYPES = {'outputFolder': STR, 'solarAccessDates': STR, 'windSpeed': FLOAT, 'windDir': FLOAT,
+                     'highPrecision': BOOL, 'baseWindSpd': FLOAT, 'sectorCnt': INT, 'forcingFile': STR,
+                     'useAverageWindFromForcing': BOOL, 'startMonth': INT, 'endMonth': INT, 'startHour': INT,
+                     'endHour': INT, 'inflowSource': STR}
+
+# mainData/windAccuracy: a number in JSON, a word in XML
+WIND_ACCURACY_WORDS = ['standard', 'quick']
+
 # Section order of ENVI-met's JSON writer; other sections follow in the order they were read.
 JSON_ORDER = ['mainData', 'SimModule', 'FailSafes', 'TThread', 'ModelTiming', 'Soil', 'indoorSettings', 'Sources',
               'LBC', 'SimpleForcing', 'FullForcing', 'TimeSteps', 'OutputSettings', 'Clouds', 'Background',
@@ -168,6 +177,18 @@ def _read_xml(text):
         for item in re.finditer(r'<([A-Za-z_][\w]*)>([^<]*)</\1>', content):
             key, value = _typed(section, item.group(1), item.group(2).strip())
             values[key] = value
+        if section == 'SimModule':
+            name = str(values.pop('name', '')).strip()
+            data = OrderedDict()
+            for key, value in values.items():
+                try:
+                    data[key] = _convert(value, MODULE_DATA_TYPES.get(key))
+                except (TypeError, ValueError):
+                    data[key] = value
+            values = OrderedDict([('name', name), ('ModuleData', data)])
+        if section == 'mainData' and isinstance(values.get('windAccuracy'), str):
+            word = values['windAccuracy'].strip().lower()
+            values['windAccuracy'] = WIND_ACCURACY_WORDS.index(word) if word in WIND_ACCURACY_WORDS else 0
         if values or section in TYPES:
             simulation[section] = values
     return simulation
@@ -211,6 +232,8 @@ def write_json(path, simulation, remark=''):
 
 def _xml_value(section, key, value):
     kind = TYPES.get(section, {}).get(key)
+    if (section, key) == ('mainData', 'windAccuracy') and not isinstance(value, str):
+        return WIND_ACCURACY_WORDS[int(value)] if 0 <= int(value) < len(WIND_ACCURACY_WORDS) else 'standard'
     if kind == BOOL or isinstance(value, bool):
         return '1' if value else '0'
     if kind == FLOATS or isinstance(value, (list, tuple)):
@@ -225,6 +248,12 @@ def write_xml(path, simulation, revision_date=''):
              '<encryptionlevel>0</encryptionlevel>', '</Header>']
     for section in ordered_sections(simulation):
         values = simulation[section]
+        if section == 'SimModule' and isinstance(values, dict):
+            # flat in XML: <name> and the ModuleData keys side by side
+            flat = OrderedDict([('name', values.get('name', ''))])
+            data = values.get('ModuleData')
+            flat.update(data if isinstance(data, dict) else {})
+            values = flat
         if not isinstance(values, dict) or any(isinstance(v, dict) for v in values.values()):
             continue
         lines.append(f'  <{section}>')

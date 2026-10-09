@@ -3132,7 +3132,29 @@ p, li { white-space: pre-wrap; }
                <string>General Settings</string>
               </attribute>
               <layout class="QGridLayout" name="gridLayout_74">
-               <item row="2" column="0">
+               <item row="0" column="0">
+                <widget class="QGroupBox" name="gb_simType">
+                 <property name="title">
+                  <string>Simulation type:</string>
+                 </property>
+                 <layout class="QGridLayout" name="gridLayout_simType">
+                  <item row="0" column="0">
+                   <widget class="QComboBox" name="cb_simType"/>
+                  </item>
+                  <item row="1" column="0">
+                   <widget class="QLabel" name="lb_simTypeInfo">
+                    <property name="text">
+                     <string>A module answers one question with a faster, simplified ENVI-met 6 run. It is set up on the Module page; the meteorology and the advanced settings are not used.</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item row="3" column="0">
                 <widget class="QGroupBox" name="gb_modelArea">
                  <property name="title">
                   <string>Model area:</string>
@@ -3158,7 +3180,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="1" column="0">
+               <item row="2" column="0">
                 <widget class="QGroupBox" name="gb_simName">
                  <property name="title">
                   <string>Simulation name:</string>
@@ -3215,7 +3237,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="4" column="0">
+               <item row="5" column="0">
                 <widget class="QGroupBox" name="gb_cpu">
                  <property name="title">
                   <string>CPU Cores (Parallel Computing):</string>
@@ -3257,7 +3279,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="0" column="0">
+               <item row="1" column="0">
                 <widget class="QGroupBox" name="gb_simDateTime">
                  <property name="title">
                   <string>Simulation Date and Time:</string>
@@ -3363,7 +3385,7 @@ p, li { white-space: pre-wrap; }
                  </layout>
                 </widget>
                </item>
-               <item row="3" column="0">
+               <item row="4" column="0">
                 <spacer name="horizontalSpacer_24">
                  <property name="orientation">
                   <enum>Qt::Horizontal</enum>
@@ -3376,8 +3398,345 @@ p, li { white-space: pre-wrap; }
                  </property>
                 </spacer>
                </item>
-               <item row="5" column="0">
+               <item row="6" column="0">
                 <spacer name="verticalSpacer_18">
+                 <property name="orientation">
+                  <enum>Qt::Vertical</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>40</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="tab_Module">
+              <attribute name="title">
+               <string>Module</string>
+              </attribute>
+              <layout class="QGridLayout" name="gridLayout_module">
+               <item row="0" column="0">
+                <widget class="QGroupBox" name="gb_moduleFox">
+                 <property name="title">
+                  <string>Meteorological data (FOX file):</string>
+                 </property>
+                 <layout class="QGridLayout" name="gridLayout_moduleFox">
+                  <item row="0" column="0">
+                   <widget class="QLineEdit" name="le_moduleFox"/>
+                  </item>
+                  <item row="0" column="1">
+                   <widget class="QPushButton" name="bt_moduleFox">
+                    <property name="text">
+                     <string>Select file</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item row="1" column="0" colspan="2">
+                   <widget class="QLabel" name="lb_moduleFoxInfo">
+                    <property name="text">
+                     <string>Saving the SIMX file copies the FOX file next to it, as ENVI-guide does.</string>
+                    </property>
+                    <property name="wordWrap">
+                     <bool>true</bool>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QStackedWidget" name="sw_module">
+                 <widget class="QWidget" name="page_moduleNone">
+                  <layout class="QGridLayout" name="gridLayout_moduleNone">
+                   <item row="0" column="0">
+                    <widget class="QLabel" name="lb_moduleNone">
+                     <property name="text">
+                      <string>The full holistic simulation uses the Meteorology page and the advanced settings. Choose a module on the General Settings page to set it up here.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <spacer name="verticalSpacer_moduleNone">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleSolar">
+                  <layout class="QGridLayout" name="gridLayout_moduleSolar">
+                   <item row="0" column="0" colspan="4">
+                    <widget class="QLabel" name="lb_solarInfo">
+                     <property name="text">
+                      <string>Sun and shade on the days below, one calculation per day.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QLabel" name="lb_solarDate">
+                     <property name="text">
+                      <string>Date:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="1">
+                    <widget class="QDateEdit" name="de_solarDate">
+                     <property name="displayFormat">
+                      <string>dd.MM.yyyy</string>
+                     </property>
+                     <property name="calendarPopup">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="2">
+                    <widget class="QPushButton" name="bt_addSolarDate">
+                     <property name="text">
+                      <string>Add date</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="3">
+                    <widget class="QPushButton" name="bt_addSolstices">
+                     <property name="text">
+                      <string>Add solstices and equinoxes</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="0" colspan="4">
+                    <widget class="QLabel" name="lb_solarDates">
+                     <property name="text">
+                      <string>Days to simulate:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="3" column="0" colspan="3">
+                    <widget class="QListWidget" name="lw_solarDates"/>
+                   </item>
+                   <item row="3" column="3" alignment="Qt::AlignTop">
+                    <widget class="QPushButton" name="bt_removeSolarDate">
+                     <property name="text">
+                      <string>Remove date</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleWindFlow">
+                  <layout class="QGridLayout" name="gridLayout_moduleWindFlow">
+                   <item row="0" column="0" colspan="2">
+                    <widget class="QLabel" name="lb_windFlowInfo">
+                     <property name="text">
+                      <string>The wind field for one inflow direction and speed.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QLabel" name="lb_moduleWindDir">
+                     <property name="text">
+                      <string>Inflow direction [°]:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="1">
+                    <widget class="QSpinBox" name="sb_moduleWindDir">
+                     <property name="maximum">
+                      <number>360</number>
+                     </property>
+                     <property name="value">
+                      <number>90</number>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="0">
+                    <widget class="QLabel" name="lb_moduleWindSpeed">
+                     <property name="text">
+                      <string>Reference wind speed in 10 m height [m/s]:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="1">
+                    <widget class="QDoubleSpinBox" name="sb_moduleWindSpeed">
+                     <property name="decimals">
+                      <number>2</number>
+                     </property>
+                     <property name="maximum">
+                      <double>20.000000000000000</double>
+                     </property>
+                     <property name="singleStep">
+                      <double>0.100000000000000</double>
+                     </property>
+                     <property name="value">
+                      <double>2.000000000000000</double>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="3" column="0">
+                    <spacer name="verticalSpacer_moduleWindFlow">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleWindComfort">
+                  <layout class="QGridLayout" name="gridLayout_moduleWindComfort">
+                   <item row="0" column="0">
+                    <widget class="QLabel" name="lb_windComfortInfo">
+                     <property name="text">
+                      <string>Wind comfort over a year from the wind of the FOX file above. The file must cover a whole year: 1 January 00:00 to 31 December 23:00, without 29 February.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <spacer name="verticalSpacer_moduleWindComfort">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleFastUtci">
+                  <layout class="QGridLayout" name="gridLayout_moduleFastUtci">
+                   <item row="0" column="0">
+                    <widget class="QLabel" name="lb_fastUtciInfo">
+                     <property name="text">
+                      <string>Hourly UTCI from the start date and time for the duration set on the General Settings page. The FOX file above must cover that period.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QCheckBox" name="chk_moduleAverageWind">
+                     <property name="text">
+                      <string>Use simplified, quicker wind conditions (the average wind of the FOX file)</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="0">
+                    <spacer name="verticalSpacer_moduleFastUtci">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                 <widget class="QWidget" name="page_moduleUtciStats">
+                  <layout class="QGridLayout" name="gridLayout_moduleUtciStats">
+                   <item row="0" column="0" colspan="4">
+                    <widget class="QLabel" name="lb_utciStatsInfo">
+                     <property name="text">
+                      <string>UTCI statistics over the months and hours below, from a FOX file covering a whole year. Start and end are included; the period cannot run over the end of the year or of the day.</string>
+                     </property>
+                     <property name="wordWrap">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="0">
+                    <widget class="QLabel" name="lb_statsStartMonth">
+                     <property name="text">
+                      <string>Start month:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="1">
+                    <widget class="QComboBox" name="cb_statsStartMonth"/>
+                   </item>
+                   <item row="1" column="2">
+                    <widget class="QLabel" name="lb_statsEndMonth">
+                     <property name="text">
+                      <string>End month:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="1" column="3">
+                    <widget class="QComboBox" name="cb_statsEndMonth"/>
+                   </item>
+                   <item row="2" column="0">
+                    <widget class="QLabel" name="lb_statsStartHour">
+                     <property name="text">
+                      <string>Start hour:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="1">
+                    <widget class="QComboBox" name="cb_statsStartHour"/>
+                   </item>
+                   <item row="2" column="2">
+                    <widget class="QLabel" name="lb_statsEndHour">
+                     <property name="text">
+                      <string>End hour:</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item row="2" column="3">
+                    <widget class="QComboBox" name="cb_statsEndHour"/>
+                   </item>
+                   <item row="3" column="0">
+                    <spacer name="verticalSpacer_moduleUtciStats">
+                     <property name="orientation">
+                      <enum>Qt::Vertical</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>20</width>
+                       <height>40</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </widget>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <spacer name="verticalSpacer_module">
                  <property name="orientation">
                   <enum>Qt::Vertical</enum>
                  </property>

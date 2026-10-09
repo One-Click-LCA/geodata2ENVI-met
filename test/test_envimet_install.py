@@ -160,8 +160,9 @@ class StartSimulationTest(unittest.TestCase):
         self.plugin.dlg.lb_selected_projFolder.setText(self.project)
         self.plugin.iface.bar.messages.clear()
         self.started = []
+        self.folders = []
         self.popen = subprocess.Popen
-        subprocess.Popen = lambda args, **kwargs: self.started.append(args)
+        subprocess.Popen = lambda args, **kwargs: self.started.append(args) or self.folders.append(kwargs.get('cwd'))
 
     def tearDown(self):
         subprocess.Popen = self.popen
@@ -183,6 +184,8 @@ class StartSimulationTest(unittest.TestCase):
         self.assertEqual(self.plugin.iface.bar.messages, [])
         self.assertEqual(self.started, [[exe, '-workspace=' + self.workspace, '-project=Courtyard Study',
                                          '-simx=hot day.simx']])
+        # a module's FOX file is opened by its bare name from the folder ENVI-met runs in: the SIMX's
+        self.assertEqual(self.folders, [self.project])
 
     def test_version_5_9_0_gets_positional_arguments(self):
         exe = self.install((5, 9, 0))

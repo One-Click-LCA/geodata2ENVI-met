@@ -27,7 +27,7 @@ GUIDE_V6 = '''{
                      "indoorLowerC": 21, "indoorUpperC": 25.5},
   "LBC": {"LBC_TQ": 3, "LBC_TKE": 1},
   "Clouds": {"lowClouds": 2, "middleClouds": 0, "highClouds": 1},
-  "SimModule": {"name": "", "settings": {"sectors": [0, 90]}}
+  "myExtension": {"value": [0, 90]}
 }'''
 
 
@@ -313,11 +313,9 @@ class SimxTabTest(_TempDir):
         self.assertEqual((dlg.cb_naturalVentilation.currentIndex(), dlg.cb_indoorMode.currentIndex(),
                           dlg.cb_indoorUse.currentIndex()), (1, 3, 2))
         self.assertEqual((dlg.sb_indoorLower.value(), dlg.sb_indoorUpper.value()), (21.0, 25.5))
-        notes = [text for _, text, _ in self.plugin.iface.bar.messages]
-        self.assertEqual(len(notes), 1)
-        self.assertIn('module', notes[0])
+        self.assertEqual(self.plugin.iface.bar.messages, [])
         saved = self.ui.model_from_ui(dlg, base=self.plugin.loaded_simx)
-        self.assertEqual(saved['SimModule'], {'name': '', 'settings': {'sectors': [0, 90]}})
+        self.assertEqual(saved['myExtension'], {'value': [0, 90]})      # a section the plugin does not know
         self.assertEqual(saved['mainData']['windAccuracy'], 1)
 
     def test_envi_met_5_building_section_is_reported(self):
@@ -390,7 +388,7 @@ def keys_read_by_envimet(path):
 
 # JSON value type written by the plugin -> reader types that accept it
 ACCEPTED = {bool: {'boolean'}, int: {'integer', 'int64', 'double', 'single', 'extended'},
-            float: {'double', 'single', 'extended'}, str: {'string'}, list: {'any'}}
+            float: {'double', 'single', 'extended'}, str: {'string'}, list: {'any'}, dict: {'any'}}
 
 
 @unittest.skipUnless(LIB_SIMX_READER and os.path.isfile(LIB_SIMX_READER),
@@ -413,14 +411,36 @@ class KeysReadByEnvimetTest(_TempDir):
 
     def unread(self, data):
         problems = []
+
+        def check(section, key, value):
+            kind = self.read_keys.get((section, key))
+            if kind is None:
+                problems.append(f'{section}/{key} is not read')
+            elif kind not in ACCEPTED[type(value)]:
+                problems.append(f'{section}/{key}: written as {type(value).__name__}, read as {kind}')
+            if isinstance(value, dict):         # SimModule/ModuleData
+                for inner, inner_value in value.items():
+                    check(section, inner, inner_value)
+
         for section, values in data.items():
             for key, value in values.items():
-                kind = self.read_keys.get((section, key))
-                if kind is None:
-                    problems.append(f'{section}/{key} is not read')
-                elif kind not in ACCEPTED[type(value)]:
-                    problems.append(f'{section}/{key}: written as {type(value).__name__}, read as {kind}')
+                check(section, key, value)
         return problems
+
+    def test_every_module(self):
+        modules = import_plugin_module('core.modules')
+        dlg = self.plugin.dlg
+        self.plugin.clear_settings_create_sim_tab()
+        dlg.lw_solarDates.addItem('21.06.2026')
+        dlg.le_moduleFox.setText(self.path('climate.fox', 'FOX'))
+        problems = []
+        for code in modules.CODES[1:]:
+            dlg.cb_simType.setCurrentIndex(dlg.cb_simType.findData(code))
+            data = self.written()
+            self.assertEqual(data['SimModule']['name'], code)
+            problems += self.unread(data)
+        self.plugin.clear_settings_create_sim_tab()
+        self.assertEqual(sorted(set(problems)), [])
 
     def test_the_reader_was_understood(self):
         self.assertEqual(self.read_keys[('mainData', 'simDuration')], 'integer')
