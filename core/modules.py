@@ -138,10 +138,5 @@ def problems(code, values):
             found.append('Select the FOX file with the meteorological data for the module.')
         elif not os.path.isfile(fox):
             found.append(f'The FOX file {fox} does not exist.')
-    if code == FAST_UTCI_STATS:
-        # ENVI-met's statistics do not wrap around the end of the year or the day
-        if values.get('startMonth', 1) > values.get('endMonth', 12):
-            found.append('The start month must not be after the end month.')
-        if values.get('startHour', 0) > values.get('endHour', 23):
-            found.append('The start hour must not be after the end hour.')
+    # the statistics period may run over the end of the year or of the day (e.g. November to February)
     return found

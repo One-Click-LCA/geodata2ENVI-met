@@ -113,9 +113,9 @@ class ModuleDefinitionsTest(_TempDir):
         fox = self.path('real.fox', 'FOX')
         self.assertEqual(m.problems(m.FAST_UTCI_STATS, {'forcingFile': fox, 'startMonth': 6, 'endMonth': 9,
                                                         'startHour': 6, 'endHour': 20}), [])
-        # ENVI-met does not wrap the period around the end of the year or of the day
-        self.assertEqual(len(m.problems(m.FAST_UTCI_STATS, {'forcingFile': fox, 'startMonth': 11, 'endMonth': 2,
-                                                            'startHour': 22, 'endHour': 4})), 2)
+        # the period may run over the end of the year and of the day, as every ENVI-met run wraps the year
+        self.assertEqual(m.problems(m.FAST_UTCI_STATS, {'forcingFile': fox, 'startMonth': 11, 'endMonth': 2,
+                                                        'startHour': 22, 'endHour': 4}), [])
         self.assertEqual(m.problems(m.WIND_FLOW, {}), [])
 
     def test_solstices_and_equinoxes(self):
@@ -285,11 +285,15 @@ class ModulePageTest(_TempDir):
         self.plugin.clear_settings_create_sim_tab()
         self.plugin.load_simx_file(target)
         self.assertEqual((dlg.cb_statsStartMonth.currentText(), dlg.cb_statsEndHour.currentText()), ('May', '18:00'))
-        dlg.cb_statsStartMonth.setCurrentIndex(10)       # November to September: not one period
-        self.assertFalse(dlg.cb_meteo.isChecked())
-        self.save(self.path('wrapped.simx'))
-        self.assertIn('start month', self.plugin.iface.bar.messages[-1][1])
-        self.assertFalse(os.path.exists(self.path('wrapped.simx')))
+        dlg.cb_statsStartMonth.setCurrentIndex(10)       # November to February, over the year end
+        dlg.cb_statsEndMonth.setCurrentIndex(1)
+        self.assertTrue(dlg.cb_meteo.isChecked())
+        wrapped = self.path('wrapped.simx')
+        self.save(wrapped)
+        self.assertEqual(self.plugin.iface.bar.messages, [])
+        with open(wrapped, encoding='utf-8') as f:
+            data = json.load(f)['SimModule']['ModuleData']
+        self.assertEqual((data['startMonth'], data['endMonth']), (11, 2))
 
     def test_modules_need_envi_met_6(self):
         self.choose(self.m.WIND_FLOW)
