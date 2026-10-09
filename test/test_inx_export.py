@@ -76,6 +76,53 @@ class InxExportTest(unittest.TestCase):
         # 3D plants are 1-based
         self.assertEqual(inx['plants3d'], [(16, 13, '0000C2')])
 
+    def test_invalid_buildings_leave_no_fixed_height(self):
+        """A building whose bottom is above its top is removed, and so is its fixed-height flag."""
+        building = make_layer('Polygon', CRS,
+                              [(rectangle_wkt(X0 + 4 * DX, Y0 + 2 * DX, X0 + 7 * DX, Y0 + 5 * DX), [10])],
+                              fields=[('h', self.INT)])
+
+        def configure(worker):
+            set_buildings(worker, building, 'h')
+            worker.bBot_UseCustom, worker.bBot_custom = True, 12
+            worker.bNOTFixedH = False
+
+        inx = self.export('invalid_building', configure)
+        self.assertTrue(all(int(v) == 0 for row in inx['zTop'] for v in row))
+        self.assertTrue(all(int(v) == 0 for row in inx['fixedheight'] for v in row))
+
+    def test_raster_outside_the_model_area_is_not_warped(self):
+        from osgeo import gdal, osr
+        from qgis.core import QgsRasterLayer
+        path = os.path.join(self.tmp, 'far_surfaces.tif')
+        dataset = gdal.GetDriverByName('GTiff').Create(path, 10, 10, 1, gdal.GDT_Int16)
+        dataset.SetGeoTransform((X0 + 50000.0, 1.0, 0, Y0 + 10.0, 0, -1.0))      # 50 km east
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(32632)
+        dataset.SetProjection(srs.ExportToWkt())
+        dataset.GetRasterBand(1).Fill(1)
+        dataset = None
+        workers, calls = [], []
+
+        def configure(worker):
+            worker.surfLayerfromVector = False
+            worker.surfLayer_raster = QgsRasterLayer(path, 'far')
+            worker.surfLayer_raster_band = 1
+            worker.surfLayer_raster_def = {'1': '0100ST'}
+            workers.append(worker)
+
+        worker_module = import_plugin_module('Worker')
+        original = worker_module.processing.run
+        worker_module.processing.run = lambda name, *args, **kwargs: calls.append(name) or original(
+            name, *args, **kwargs)
+        try:
+            inx = self.export('far_raster', configure)
+        finally:
+            worker_module.processing.run = original
+        self.assertNotIn('gdal:warpreproject', calls)
+        self.assertEqual({v for row in inx['soil'] for v in row}, {'0200PP'})      # the starting surface
+        self.assertTrue(any('Surfaces' in w for w in workers[0].warnings), workers[0].warnings)
+
     def test_custom_ids_without_layers(self):
         """'Custom ID' ticked but no layer chosen must not crash the export (M2)."""
 

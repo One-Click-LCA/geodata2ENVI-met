@@ -111,6 +111,8 @@ def read_inx(path):
         'II': int(scalar('grids-I')),
         'JJ': int(scalar('grids-J')),
         'zTop': matrix('zTop'),
+        'fixedheight': matrix('fixedheight'),
+        'soil': matrix('ID_soilprofile'),
         'receptors': receptors,
         'plants3d': plants,
         'text': text,

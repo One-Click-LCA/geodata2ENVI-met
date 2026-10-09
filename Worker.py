@@ -955,12 +955,20 @@ class Worker(QObject):
         grid1_str_array = grid1_int_array.astype(str)
         return grid1_str_array, grid1_int_array
 
+    def _no_data_grid(self, what):
+        """What a raster outside the model area gives: no data in every cell (then mapped to the default)."""
+        self.warnings.append(f'{what}: the raster does not reach the model area; all cells get the default.')
+        grid1_int_array = np.full((self.JJ, self.II), int(C_NODATA_VALUE), dtype=int)
+        return grid1_int_array.astype(str), grid1_int_array
+
     def raster_surface_from_raster(self):
         # reproject to UTM
         outFN = self.reprojectRasterLayerToUTM(self.surfLayer_raster)
-        self.surfLayer_raster = QgsRasterLayer(outFN, "surfTMP_UTM")
-
-        grid1_str_array, grid1_int_array = self.get_data_from_raster(self.surfLayer_raster)
+        if outFN is None:
+            grid1_str_array, grid1_int_array = self._no_data_grid('Surfaces')
+        else:
+            self.surfLayer_raster = QgsRasterLayer(outFN, "surfTMP_UTM")
+            grid1_str_array, grid1_int_array = self.get_data_from_raster(self.surfLayer_raster)
 
         # raster values the user mapped onto ENVI-met soils; others get 'OTHER' if defined,
         # else the starting surface
@@ -1054,8 +1062,11 @@ class Worker(QObject):
     def raster_simple_plants_from_raster(self):
         # reproject to UTM
         outFN = self.reprojectRasterLayerToUTM(self.plant1dLayer_raster)
-        self.plant1dLayer_raster = QgsRasterLayer(outFN, "spTMP_UTM")
-        grid1_str_array, grid1_int_array = self.get_data_from_raster(self.plant1dLayer_raster)
+        if outFN is None:
+            grid1_str_array, grid1_int_array = self._no_data_grid('Simple plants')
+        else:
+            self.plant1dLayer_raster = QgsRasterLayer(outFN, "spTMP_UTM")
+            grid1_str_array, grid1_int_array = self.get_data_from_raster(self.plant1dLayer_raster)
 
         # raster values the user mapped onto ENVI-met plants; others get 'OTHER' if defined, else no plant
         return map_values(grid1_str_array, self.plant1dLayer_raster_def,
@@ -1698,6 +1709,7 @@ class Worker(QObject):
         return QgsReferencedRectangle(self._sub_area_extent(margin), self.subAreaLayer_nonRot.crs())
 
     def reprojectRasterLayerToUTM(self, aLayer):
+        """The raster warped into the sub-area's UTM zone, or None if it does not reach the model area."""
         context = self.get_safe_processing_context()
         source_crs = aLayer.crs()
         if self.target_epsg is not None:
@@ -1707,10 +1719,12 @@ class Worker(QObject):
                                                QgsCoordinateTransformContext())
             window = transform.transformBoundingBox(self._sub_area_extent(margin=150.0))
             window = window.intersect(aLayer.extent())
-            if not window.isEmpty():
-                aLayer = processing.run("gdal:cliprasterbyextent",
-                                        {"INPUT": aLayer, "PROJWIN": window, "OVERCRS": False,
-                                         "OUTPUT": 'TEMPORARY_OUTPUT'}, context=context)['OUTPUT']
+            if window.isEmpty():
+                # nothing of it lies in the model area: warping all of it would only give no-data cells
+                return None
+            aLayer = processing.run("gdal:cliprasterbyextent",
+                                    {"INPUT": aLayer, "PROJWIN": window, "OVERCRS": False,
+                                     "OUTPUT": 'TEMPORARY_OUTPUT'}, context=context)['OUTPUT']
         else:
             proj = pyproj.Transformer.from_crs(aLayer.crs().authid(), 4326, always_xy=True)
             x1, y1 = (aLayer.extent().xMinimum(), aLayer.extent().yMinimum())
@@ -1972,7 +1986,7 @@ class Worker(QObject):
         QgsMessageLog.logMessage("Check integrity of Buildings...", 'ENVI-met', level=Qgis.MessageLevel.Info)
         invalid = (bTop_int_array <= 0) | (bBot_int_array >= bTop_int_array)
         bRemSet02 = set(np.unique(bNumber_int_array[invalid]).tolist())
-        for array in (bTop_int_array, bBot_int_array, bNumber_int_array):
+        for array in (bFixHeight_int_array, bTop_int_array, bBot_int_array, bNumber_int_array):
             array[invalid] = 0
 
         # now update bList — drop buildings that no longer have any cells
