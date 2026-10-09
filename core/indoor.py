@@ -4,10 +4,12 @@ A building without a value takes the model-wide setting of the simulation (SIMX)
 building use 0, indoor mode -1 and thresholds -99 mean "not stated". The internal
 heat gain is only read for buildings of use 3 ("other").
 
-Attribute values may be the codes or common words ("office", "residential", "AC",
-...), as GIS layers often carry text. Each parser returns (value, understood):
-``understood`` is False for a value that was given but could not be read, which
-then falls back to "not stated".
+Attribute values may be the user codes or common words ("office", "residential",
+"AC", ...), as GIS layers often carry text. The user codes are the same for both
+settings: -1 is "not stated", the options count from 1 (USER_CODES). They differ
+from the INX codes (use 0..4, mode -1..3), which the parsers return. Each parser
+returns (value, understood): ``understood`` is False for a value that was given
+but could not be read, which then falls back to "not stated".
 
 No QGIS imports.
 """
@@ -17,12 +19,19 @@ MODE_MODEL_DEFAULT = -1
 THRESHOLD_NOT_STATED = -99.0
 DEFAULT_INTERNAL_GAIN = 8.0
 
-# Combo box entries of the export page, in code order
-USE_LABELS = ['Not stated (simulation setting)', 'Residential (5 W/m2, 17:00-08:00)', 'Office (15 W/m2, 08:00-17:00)',
-              'Other (own internal heat gain)', 'Hall / single storey (4 W/m2, one floor)']
-MODE_LABELS = ['Not stated (simulation setting)', 'Free-running (no heating, no cooling)',
-               'Heated, windows can be opened', 'Mixed mode (windows first, cooling as backup)',
-               'Fully conditioned (AC: sealed, heated and cooled)']   # codes -1 .. 3
+# Codes a user enters in an attribute field, in the order of the labels below
+USER_CODES = (-1, 1, 2, 3, 4)
+# user code -> INX code
+_USE_INX = {-1: USE_NOT_STATED, 1: 1, 2: 2, 3: 3, 4: 4}
+_MODE_INX = {-1: MODE_MODEL_DEFAULT, 1: 0, 2: 1, 3: 2, 4: 3}
+
+# Combo box entries of the export page, in the order of USER_CODES
+USE_LABELS = ['-1: Not stated (simulation setting)', '1: Residential (5 W/m2, 17:00-08:00)',
+              '2: Office (15 W/m2, 08:00-17:00)', '3: Other (own internal heat gain)',
+              '4: Hall / single storey (4 W/m2, one floor)']
+MODE_LABELS = ['-1: Not stated (simulation setting)', '1: Free-running (no heating, no cooling)',
+               '2: Heated, windows can be opened', '3: Mixed mode (windows first, cooling as backup)',
+               '4: Fully conditioned (AC: sealed, heated and cooled)']
 
 _USE_WORDS = {
     0: ('not stated', 'unknown', 'mixed', 'mixed use', 'default', 'none', 'unspecified'),
@@ -48,7 +57,7 @@ def _empty(value):
     return value is None or str(value).strip() in ('', 'NULL', 'None', 'nan')
 
 
-def _word_lookup(value, words, low, high, default):
+def _word_lookup(value, words, inx_codes, default):
     if _empty(value):
         return default, True
     text = str(value).strip().lower()
@@ -59,19 +68,19 @@ def _word_lookup(value, words, low, high, default):
             if text in names:
                 return code, True
         return default, False
-    if number == int(number) and low <= number <= high:
-        return int(number), True
+    if number == int(number) and int(number) in inx_codes:
+        return inx_codes[int(number)], True
     return default, False
 
 
 def building_use(value):
-    """Building use code 0..4 from a code or a word."""
-    return _word_lookup(value, _USE_WORDS, 0, 4, USE_NOT_STATED)
+    """INX building use code 0..4 from a user code (-1, 1..4) or a word."""
+    return _word_lookup(value, _USE_WORDS, _USE_INX, USE_NOT_STATED)
 
 
 def indoor_mode(value):
-    """Indoor mode code -1..3 from a code or a word."""
-    return _word_lookup(value, _MODE_WORDS, -1, 3, MODE_MODEL_DEFAULT)
+    """INX indoor mode code -1..3 from a user code (-1, 1..4) or a word."""
+    return _word_lookup(value, _MODE_WORDS, _MODE_INX, MODE_MODEL_DEFAULT)
 
 
 def _number(value, default, low, high, unset=None):

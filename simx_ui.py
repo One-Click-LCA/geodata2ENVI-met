@@ -80,7 +80,7 @@ def model_from_ui(dlg, base=None, json_format=True, fox_name=None):
 
 
 def _meteorology(dlg, simulation, main, json_format):
-    """One of simple forcing, full forcing and open/cyclic boundaries."""
+    """Simple or full forcing."""
     loaded_full = simulation.get('FullForcing')
     for section in ('SimpleForcing', 'FullForcing', 'LBC', 'Clouds'):
         simulation.pop(section, None)
@@ -107,14 +107,6 @@ def _meteorology(dlg, simulation, main, json_format):
                                                highClouds=dlg.sb_highclouds_2.value())
         if not full['forceQ']:
             main['Q_2m'] = dlg.sb_relHum.value()
-    elif _checked(dlg.rb_other):
-        simulation['LBC'] = OrderedDict(LBC_TQ=1 if dlg.cb_otherBChumT.currentIndex() == 0 else 3,
-                                        LBC_TKE=1 if dlg.cb_otherBCturb.currentIndex() == 0 else 3)
-        simulation['Clouds'] = OrderedDict(lowClouds=dlg.sb_otherLowclouds.value(),
-                                           middleClouds=dlg.sb_otherMediumclouds.value(),
-                                           highClouds=dlg.sb_otherHighclouds.value())
-        main.update(T_H=dlg.sb_otherAirT.value() + KELVIN_OFFSET, Q_2m=dlg.sb_otherHum.value(),
-                    windSpeed=dlg.sb_otherWS.value(), windDir=dlg.sb_otherWdir.value(), z0=dlg.sb_otherRlength.value())
     else:
         simulation['Clouds'] = OrderedDict(lowClouds=dlg.sb_lowclouds.value(), middleClouds=dlg.sb_midclouds.value(),
                                            highClouds=dlg.sb_highclouds.value())
@@ -186,7 +178,7 @@ def _radiation(dlg, simulation):
     scheme = _section(simulation, 'RadScheme')
     scheme.update(IVSHeightAngle_HiRes=hi_height, IVSAziAngle_HiRes=hi_azimuth, IVSHeightAngle_LoRes=lo_height,
                   IVSAziAngle_LoRes=lo_azimuth)
-    for key, value in (('AdvCanopyRadTransfer', True), ('ViewFacUpdateInterval', 30),
+    for key, value in (('AdvCanopyRadTransfer', True), ('ViewFacUpdateInterval', 7),
                        ('RayTraceStepWidthHighRes', 0.25), ('RayTraceStepWidthLowRes', 0.5),
                        ('RadiationHeightBoundary', 10.0), ('MRTCalcMethod', 1), ('MRTProjFac', 2)):
         scheme.setdefault(key, value)
@@ -196,7 +188,7 @@ def _radiation(dlg, simulation):
 def _output(dlg, simulation):
     output = _section(simulation, 'OutputSettings')
     output.update(mainFiles=dlg.sb_outputIntOther.value(), textFiles=dlg.sb_outputIntRecBld.value(),
-                  netCDF=_checked(dlg.rb_writeNetCDFyes), inclNestingGrids=False,
+                  netCDF=True, inclNestingGrids=False,
                   writeBuildings=dlg.cb_outputBldData.isChecked(), writeRadiation=dlg.cb_outputRadData.isChecked(),
                   writeSoil=dlg.cb_outputSoilData.isChecked(), writeVegetation=dlg.cb_outputVegData.isChecked())
     for key, value in (('writeAgents', False), ('writeAtmosphere', True), ('writeObjects', False),
@@ -208,7 +200,7 @@ def _output(dlg, simulation):
 def _expert(dlg, simulation):
     thread = _section(simulation, 'TThread')
     thread['UseTThread_CallMain'] = not _checked(dlg.rb_threadingMain)
-    thread.setdefault('TThreadPRIO', 5)
+    thread.setdefault('TThreadPRIO', 4)     # tpHigher, as ENVI-guide
 
 
 # --------------------------------------------------------------------------------------------
@@ -414,19 +406,16 @@ def ui_from_model(dlg, simulation, simx_dir=None):
         _set_int(dlg.sb_mediumclouds, clouds.get('middleClouds'))
         _set_int(dlg.sb_highclouds_2, clouds.get('highClouds'))
     elif 'LBC' in simulation:
-        dlg.rb_other.setChecked(True)
-        lbc = simulation['LBC']
-        dlg.cb_otherBChumT.setCurrentIndex(0 if lbc.get('LBC_TQ', 1) == 1 else 1)
-        dlg.cb_otherBCturb.setCurrentIndex(0 if lbc.get('LBC_TKE', 1) == 1 else 1)
-        if 'T_H' in main:
-            _set(dlg.sb_otherAirT, main['T_H'] - kelvin)
-        _set(dlg.sb_otherHum, main.get('Q_2m'))
-        _set(dlg.sb_otherWS, main.get('windSpeed'))
-        _set(dlg.sb_otherWdir, main.get('windDir'))
-        _set(dlg.sb_otherRlength, main.get('z0'))
-        _set_int(dlg.sb_otherLowclouds, clouds.get('lowClouds'))
-        _set_int(dlg.sb_otherMediumclouds, clouds.get('middleClouds'))
-        _set_int(dlg.sb_otherHighclouds, clouds.get('highClouds'))
+        # the plugin no longer offers open/cyclic boundaries: simple forcing with the file's wind and clouds
+        dlg.rb_simpleForcing.setChecked(True)
+        _set(dlg.sb_windspeed, main.get('windSpeed'))
+        _set(dlg.sb_winddir, main.get('windDir'))
+        _set(dlg.sb_rlength, main.get('z0'))
+        _set_int(dlg.sb_lowclouds, clouds.get('lowClouds'))
+        _set_int(dlg.sb_midclouds, clouds.get('middleClouds'))
+        _set_int(dlg.sb_highclouds, clouds.get('highClouds'))
+        notes.append('The file uses open/cyclic boundaries, which the plugin does not offer: Simple Forcing is '
+                     'selected instead. Check the meteorology before saving.')
 
     if 'Soil' in simulation:
         dlg.chk_soilSim.setCheckState(Qt.CheckState.Checked)
@@ -472,7 +461,6 @@ def ui_from_model(dlg, simulation, simx_dir=None):
             widget.setCheckState(Qt.CheckState.Checked if output.get(key, True) else Qt.CheckState.Unchecked)
         _set_int(dlg.sb_outputIntRecBld, output.get('textFiles'))
         _set_int(dlg.sb_outputIntOther, output.get('mainFiles'))
-        (dlg.rb_writeNetCDFyes if output.get('netCDF', True) else dlg.rb_writeNetCDFNo).setChecked(True)
     if 'TThread' in simulation:
         dlg.chk_expertSim.setCheckState(Qt.CheckState.Checked)
         own = simulation['TThread'].get('UseTThread_CallMain', False)

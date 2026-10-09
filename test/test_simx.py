@@ -239,28 +239,23 @@ class SimxTabTest(_TempDir):
                           dlg.cb_indoorUse.currentIndex()), (1, 3, 2))
         self.assertEqual((dlg.sb_indoorLower.value(), dlg.sb_indoorUpper.value()), (21.0, 25.5))
 
-    def test_open_cyclic_round_trip(self):
+    def test_open_cyclic_file_becomes_simple_forcing(self):
+        """Open/cyclic boundaries are not offered any more: simple forcing with the file's wind and clouds."""
         dlg = self.dlg
-        dlg.rb_other.click()
-        self.assertEqual(dlg.stackedWidget_3.currentIndex(), 2)
-        dlg.cb_otherBChumT.setCurrentIndex(1)
-        dlg.sb_otherAirT.setValue(23.0)
-        dlg.sb_otherHum.setValue(60.0)
-        dlg.sb_otherWS.setValue(3.0)
-        dlg.sb_otherWdir.setValue(250.0)
-        dlg.sb_otherLowclouds.setValue(2)
-        simulation = self.ui.model_from_ui(dlg)
-        self.assertEqual(simulation['LBC'], {'LBC_TQ': 3, 'LBC_TKE': 1})
-        self.assertNotIn('SimpleForcing', simulation)
-        self.assertAlmostEqual(simulation['mainData']['T_H'], 23.0 + self.ui.KELVIN_OFFSET)
-        self.reload(simulation)
-        self.assertTrue(dlg.rb_other.isChecked())
-        self.assertEqual(dlg.stackedWidget_3.currentIndex(), 2)
-        self.assertEqual((dlg.cb_otherBChumT.currentIndex(), dlg.cb_otherBCturb.currentIndex()), (1, 0))
-        self.assertAlmostEqual(dlg.sb_otherAirT.value(), 23.0)
-        self.assertEqual((dlg.sb_otherHum.value(), dlg.sb_otherWS.value(), dlg.sb_otherWdir.value()),
-                         (60.0, 3.0, 250.0))
-        self.assertEqual(dlg.sb_otherLowclouds.value(), 2)
+        notes = self.ui.ui_from_model(dlg, json.loads(GUIDE_V6))
+        self.assertTrue(dlg.rb_simpleForcing.isChecked())
+        self.assertEqual((dlg.sb_windspeed.value(), dlg.sb_winddir.value(), dlg.sb_lowclouds.value()),
+                         (3.0, 250.0, 2))
+        self.assertTrue(any('open/cyclic' in note for note in notes))
+        simulation = self.ui.model_from_ui(dlg, base=json.loads(GUIDE_V6))
+        self.assertNotIn('LBC', simulation)
+        self.assertIn('SimpleForcing', simulation)
+
+    def test_netcdf_is_always_written(self):
+        dlg = self.dlg
+        dlg.chk_outputSim.setChecked(True)
+        simulation = self.ui.model_from_ui(dlg, base={'OutputSettings': {'netCDF': False}})
+        self.assertIs(simulation['OutputSettings']['netCDF'], True)
 
     def test_full_forcing_round_trip(self):
         dlg = self.dlg
@@ -315,13 +310,14 @@ class SimxTabTest(_TempDir):
     def test_loading_an_envi_guide_6_file(self):
         dlg = self.dlg
         self.plugin.load_simx_file(self.path('guide6.simx', GUIDE_V6))
-        self.assertTrue(dlg.rb_other.isChecked())
-        self.assertEqual(dlg.cb_otherBChumT.currentIndex(), 1)
+        self.assertTrue(dlg.rb_simpleForcing.isChecked())         # open/cyclic is not offered any more
         self.assertTrue(dlg.chk_buildingsSim.isChecked())
         self.assertEqual((dlg.cb_naturalVentilation.currentIndex(), dlg.cb_indoorMode.currentIndex(),
                           dlg.cb_indoorUse.currentIndex()), (1, 3, 2))
         self.assertEqual((dlg.sb_indoorLower.value(), dlg.sb_indoorUpper.value()), (21.0, 25.5))
-        self.assertEqual(self.plugin.iface.bar.messages, [])
+        notes = [text for _, text, _ in self.plugin.iface.bar.messages]
+        self.assertEqual(len(notes), 1)
+        self.assertIn('open/cyclic', notes[0])
         saved = self.ui.model_from_ui(dlg, base=self.plugin.loaded_simx)
         self.assertEqual(saved['myExtension'], {'value': [0, 90]})      # a section the plugin does not know
         self.assertEqual(saved['mainData']['windAccuracy'], 1)
@@ -472,8 +468,6 @@ class KeysReadByEnvimetTest(_TempDir):
         dlg.rb_fullForcing.click()
         for no in (dlg.rb_forceT_no, dlg.rb_forceHum_no, dlg.rb_forceWind_no, dlg.rb_forceRadC_no):
             no.setChecked(True)
-        problems += self.unread(self.written())
-        dlg.rb_other.click()
         problems += self.unread(self.written())
         self.assertEqual(sorted(set(problems)), [])
 

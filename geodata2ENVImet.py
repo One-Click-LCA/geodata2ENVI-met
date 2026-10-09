@@ -93,7 +93,7 @@ class Geo2ENVImet:
         # status states
         self.generalSettings_states = ('No model area (*.INX) selected!', 'Invalid simulation name!', '')
         self.meteoSettings_states = ('Simple Forcing selected', 'Full Forcing selected - FOX-file missing',
-                                     'Full Forcing selected', 'Open/Cyclic selected')
+                                     'Full Forcing selected')
 
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
@@ -519,10 +519,9 @@ class Geo2ENVImet:
                       ('upper', 'bIndoorUpper'), ('gain', 'bInternalGain'))
 
     def indoor_static_value(self, key, name):
-        if key == 'use':
-            return self.dlg.cmb_bUse.currentIndex()
-        if key == 'mode':
-            return self.dlg.cmb_bIndoorMode.currentIndex() - 1     # the first entry is -1, "not stated"
+        if key in ('use', 'mode'):
+            # the user code of the entry, as it would be entered in an attribute field
+            return core_indoor.USER_CODES[max(0, getattr(self.dlg, f'cmb_{name}').currentIndex())]
         return getattr(self.dlg, f'le_{name}').text().strip()
 
     def kill_worker(self):
@@ -1058,9 +1057,11 @@ class Geo2ENVImet:
         return None
 
     def start_db_manager(self):
-        if self.enviProjects is not None:
-            filepath = self.enviProjects.installPath + "win64/DBManager.exe"
-            os.spawnv(os.P_NOWAIT, filepath, ["-someFlag", "someOtherFlag"])
+        if self.enviProjects is None:
+            self.reload_db()
+        filepath = self.enviProjects.installPath + "win64/DBManager.exe" if self.enviProjects is not None else ''
+        if filepath and os.path.isfile(filepath):
+            subprocess.Popen([filepath], cwd=os.path.dirname(filepath))
         else:
             self.iface.messageBar().pushMessage("Error",
                                                 "Could not find a local ENVI-met installation / workspace to load "
@@ -1452,7 +1453,6 @@ class Geo2ENVImet:
 
         self.dlg.rb_simpleForcing.clicked.connect(self.select_forcing_mode)
         self.dlg.rb_fullForcing.clicked.connect(self.select_forcing_mode)
-        self.dlg.rb_other.clicked.connect(self.select_forcing_mode)
 
         self.dlg.cb_naturalVentilation.currentIndexChanged.connect(self.update_indoor_page)
         self.dlg.cb_indoorMode.currentIndexChanged.connect(self.update_indoor_page)
@@ -1696,12 +1696,7 @@ class Geo2ENVImet:
                 self.dlg.lb_selectedDateSim.setText(f"{d}.{m}.{y}")
 
     def select_forcing_mode(self):
-        if self.dlg.rb_simpleForcing.isChecked():
-            # show page for simple forcing
-            self.dlg.stackedWidget_3.setCurrentIndex(0)
-            self.dlg.lb_meteorology.setText(self.meteoSettings_states[0])
-            self.dlg.cb_meteo.setCheckState(Qt.CheckState.Checked)
-        elif self.dlg.rb_fullForcing.isChecked():
+        if self.dlg.rb_fullForcing.isChecked():
             # show page for full forcing
             self.dlg.stackedWidget_3.setCurrentIndex(1)
             if (self.dlg.le_selectedFOX.text() == '') or self.dlg.le_selectedFOX.text().isspace():
@@ -1711,9 +1706,9 @@ class Geo2ENVImet:
                 self.dlg.lb_meteorology.setText(self.meteoSettings_states[2])
                 self.dlg.cb_meteo.setCheckState(Qt.CheckState.Checked)
         else:
-            # show page for open/cyclic
-            self.dlg.stackedWidget_3.setCurrentIndex(2)
-            self.dlg.lb_meteorology.setText(self.meteoSettings_states[3])
+            # show page for simple forcing
+            self.dlg.stackedWidget_3.setCurrentIndex(0)
+            self.dlg.lb_meteorology.setText(self.meteoSettings_states[0])
             self.dlg.cb_meteo.setCheckState(Qt.CheckState.Checked)
 
     def clear_settings_create_sim_tab(self):
@@ -1775,16 +1770,16 @@ class Geo2ENVImet:
         # Simple Forcing
         self.dlg.sb_timeMaxT.setValue(16)
         self.dlg.sb_timeMinT.setValue(5)
-        self.dlg.sb_timeMaxHum.setValue(5)
+        self.dlg.sb_timeMaxHum.setValue(4)
         self.dlg.sb_timeMinHum.setValue(16)
         self.dlg.hs_maxT.setValue(28)
         self.dlg.hs_minT.setValue(17)
         self.dlg.hs_maxHum.setValue(75)
-        self.dlg.hs_minHum.setValue(45)
+        self.dlg.hs_minHum.setValue(43)
         self.update_temp_and_hum_simpleforcing()
 
-        self.dlg.sb_windspeed.setValue(1.50)
-        self.dlg.sb_winddir.setValue(270.00)
+        self.dlg.sb_windspeed.setValue(2.00)
+        self.dlg.sb_winddir.setValue(90.00)
         self.dlg.sb_rlength.setValue(0.10)
         self.dlg.sb_lowclouds.setValue(0)
         self.dlg.sb_midclouds.setValue(0)
@@ -1799,7 +1794,7 @@ class Geo2ENVImet:
         self.dlg.rb_forceT_yes.setChecked(True)
         self.dlg.rb_forceRadC_yes.setChecked(True)
         self.dlg.rb_forceHum_yes.setChecked(True)
-        self.dlg.rb_forcePrec_yes.setChecked(True)
+        self.dlg.rb_forcePrec_no.setChecked(True)
         self.dlg.sb_constWS_FUFo.setValue(2.00)
         self.dlg.sb_constWD_FuFo.setValue(135.00)
         self.dlg.sb_rlength_FuFo.setValue(0.10)
@@ -1813,11 +1808,11 @@ class Geo2ENVImet:
         self.dlg.stackedWidget_6.setCurrentIndex(0)
         self.dlg.stackedWidget_7.setCurrentIndex(1)
 
-        # Soil
-        self.dlg.sb_soilHumUpper.setValue(65.00)
-        self.dlg.sb_soilHumMiddle.setValue(70.00)
-        self.dlg.sb_soilHumLower.setValue(75.00)
-        self.dlg.sb_soilHumBedrock.setValue(75.00)
+        # Soil (ENVI-met 6: % of the usable field capacity; negative: % of the wilting point)
+        self.dlg.sb_soilHumUpper.setValue(45.00)
+        self.dlg.sb_soilHumMiddle.setValue(50.00)
+        self.dlg.sb_soilHumLower.setValue(55.00)
+        self.dlg.sb_soilHumBedrock.setValue(60.00)
 
         # Radiation
         self.dlg.cb_resIVS.setCurrentIndex(1)
@@ -1851,7 +1846,6 @@ class Geo2ENVImet:
         self.dlg.cb_outputVegData.setCheckState(Qt.CheckState.Checked)
         self.dlg.sb_outputIntRecBld.setValue(30)
         self.dlg.sb_outputIntOther.setValue(60)
-        self.dlg.rb_writeNetCDFNo.setChecked(True)
 
         # Expert
         self.dlg.rb_threadingMain.setChecked(True)

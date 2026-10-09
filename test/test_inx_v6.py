@@ -40,11 +40,13 @@ class IndoorValuesTest(unittest.TestCase):
         use = self.indoor.building_use
         self.assertEqual(use(None), (0, True))
         self.assertEqual(use('NULL'), (0, True))
+        self.assertEqual(use(-1), (0, True))           # user code -1: not stated, INX code 0
         self.assertEqual(use(2), (2, True))
         self.assertEqual(use('4.0'), (4, True))
         self.assertEqual(use(' Office '), (2, True))
         self.assertEqual(use('residential'), (1, True))
         self.assertEqual(use('Warehouse'), (4, True))
+        self.assertEqual(use(0), (0, False))           # the user codes start at 1
         self.assertEqual(use(7), (0, False))
         self.assertEqual(use('2.5'), (0, False))
         self.assertEqual(use('castle'), (0, False))
@@ -53,12 +55,14 @@ class IndoorValuesTest(unittest.TestCase):
         mode = self.indoor.indoor_mode
         self.assertEqual(mode(''), (-1, True))
         self.assertEqual(mode(-1), (-1, True))
-        self.assertEqual(mode(3), (3, True))
+        self.assertEqual(mode(1), (0, True))           # user codes 1..4 are INX codes 0..3
+        self.assertEqual(mode(4), (3, True))
         self.assertEqual(mode('AC'), (3, True))
         self.assertEqual(mode('air-conditioned'), (3, True))
         self.assertEqual(mode('free-running'), (0, True))
         self.assertEqual(mode('Mixed Mode'), (2, True))
-        self.assertEqual(mode(4), (-1, False))
+        self.assertEqual(mode(0), (-1, False))
+        self.assertEqual(mode(5), (-1, False))
 
     def test_numbers(self):
         self.assertEqual(self.indoor.threshold(''), (-99.0, True))
@@ -164,7 +168,7 @@ class InxExportV6Test(unittest.TestCase):
     def test_fields_and_static_values(self):
         def configure(worker):
             set_buildings(worker, self.buildings(), 'h')
-            worker.bIndoor.update(use=('use', ''), lower=('lower', ''), mode=(None, 3), gain=(None, '12'))
+            worker.bIndoor.update(use=('use', ''), lower=('lower', ''), mode=(None, 4), gain=(None, '12'))
             worker.bSuppressACHeat = True
             worker.useSurroundingArea = False
             worker.surroundingBorders = {'Left': 0, 'Right': 5, 'Front': 26, 'Rear': 17}
@@ -242,7 +246,8 @@ class DialogV6Test(unittest.TestCase):
             self.plugin.transfer_building_info_to_worker()
             self.plugin.transfer_subarea_gridding_info_to_worker()
             worker = self.plugin.worker
-            self.assertEqual(worker.bIndoor, {'use': (None, 3), 'mode': (None, 3), 'lower': (None, ''),
+            # user codes: the fourth entry of each box is 3, the fifth 4
+            self.assertEqual(worker.bIndoor, {'use': (None, 3), 'mode': (None, 4), 'lower': (None, ''),
                                               'upper': (None, ''), 'gain': (None, '12')})
             self.assertTrue(worker.bSuppressACHeat)
             self.assertEqual(worker.surroundingBorders, {'Left': 1, 'Right': 1, 'Front': 1, 'Rear': 26})

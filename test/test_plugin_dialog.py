@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import unittest
 
-from .plugin_env import IfaceStub, SlotErrors, import_plugin_module, make_plugin, start_qgis
+from .plugin_env import IfaceStub, import_plugin_module, make_plugin, start_qgis
 
 
 class _EmptySettings:
@@ -66,15 +66,6 @@ class DialogHandlersTest(unittest.TestCase):
         self.assertIs(self.plugin.thread, before)
         self.plugin.preview_xy_timer.stop()
 
-    def test_netcdf_radio_buttons(self):
-        """The NetCDF yes/no buttons used to raise on every click (B4)."""
-        dlg = self.plugin.dlg
-        dlg.tab_Output.setEnabled(True)
-        with SlotErrors() as errors:
-            dlg.rb_writeNetCDFyes.click()
-            dlg.rb_writeNetCDFNo.click()
-        self.assertEqual(errors, [])
-
 
 class SimpleForcingTableTest(unittest.TestCase):
 
@@ -99,11 +90,12 @@ class SimpleForcingTableTest(unittest.TestCase):
         self.plugin.update_temp_and_hum_simpleforcing()
 
     def test_default_profile(self):
-        # defaults: T 17 degC at 05:00, 28 degC at 16:00; rel. humidity 75 % at 05:00, 45 % at 16:00
-        self.assertEqual(self.table(0), ['21.23', '63.46'])
-        self.assertEqual(self.table(1), ['20.38', '65.77'])
-        self.assertEqual(self.table(5), ['17.0', '75.0'])
-        self.assertEqual(self.table(16), ['28.0', '45.0'])
+        # defaults (as ENVI-guide): T 17 degC at 05:00, 28 degC at 16:00; rel. humidity 75 % at 04:00, 43 % at 16:00
+        self.assertEqual(self.table(0), ['21.23', '64.33'])
+        self.assertEqual(self.table(1), ['20.38', '67.0'])
+        self.assertEqual(self.table(4), ['17.85', '75.0'])
+        self.assertEqual(self.table(5), ['17.0', '72.33'])
+        self.assertEqual(self.table(16), ['28.0', '43.0'])
 
     def test_humidity_falls_back_over_its_own_night(self):
         """M5: with the humidity maximum after its minimum, the night used the temperature hours."""
