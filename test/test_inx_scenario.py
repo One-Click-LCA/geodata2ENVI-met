@@ -17,6 +17,11 @@ from .plugin_env import DATA_DIR, start_qgis
 
 GOLDEN = os.path.join(DATA_DIR, 'inx_scenario_golden.INX')
 
+# Matrices compared with a tolerance. The terrain heights are whole metres, cut off from
+# the DEM interpolated by GDAL; GDAL versions differ by millimetres, which moves a cell
+# lying just above a whole metre (5.002 m here) by one metre.
+TOLERANT = {'terrainheight': 1}
+
 
 def matrices(text):
     """Every matrix of an INX file, by tag (also when its closing tag is missing)."""
@@ -52,7 +57,18 @@ class InxScenarioTest(unittest.TestCase):
         self.assertEqual(sorted(new), sorted(old))
         for tag in old:
             with self.subTest(matrix=tag):
-                self.assertEqual(new[tag], old[tag])
+                if tag in TOLERANT:
+                    self.assertMatrixClose(new[tag], old[tag], TOLERANT[tag])
+                else:
+                    self.assertEqual(new[tag], old[tag])
+
+    def assertMatrixClose(self, new, old, tolerance):
+        self.assertEqual(len(new), len(old))
+        for row, (a, b) in enumerate(zip(new, old)):
+            a, b = [int(v) for v in a.split(',')], [int(v) for v in b.split(',')]
+            self.assertEqual(len(a), len(b))
+            worst = max(abs(x - y) for x, y in zip(a, b))
+            self.assertLessEqual(worst, tolerance, f'row {row}: {a} != {b}')
 
     def test_lists_and_location_match_the_reference(self):
         new, old = read_inx(self.path), read_inx(GOLDEN)
