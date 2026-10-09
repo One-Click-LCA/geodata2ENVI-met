@@ -65,9 +65,14 @@ def cell_centres(x0=X0, y0=Y0, rotation=ROTATION, nx=NX, ny=NY, dx=DX):
     return x0 + xx * math.cos(r) + yy * math.sin(r), y0 - xx * math.sin(r) + yy * math.cos(r)
 
 
-def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitude=LATITUDE):
-    """An ENVI-met main output file; ``layout='old'`` mimics files from before the CF update."""
+def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitude=LATITUDE, dz=None):
+    """An ENVI-met main output file; ``layout='old'`` mimics files from before the CF update.
+
+    ``dz``: other level thicknesses (as many as DZ), for a run with another vertical grid.
+    """
     import netCDF4
+    dz = DZ if dz is None else dz
+    assert len(dz) == NZ
     os.makedirs(os.path.dirname(path), exist_ok=True)
     ds = netCDF4.Dataset(path, 'w', format='NETCDF4')
     try:
@@ -79,7 +84,7 @@ def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitu
         ds.setncattr('SimulationTime', '04.00.00')
         ds.setncattr('SizeDX', np.full(NX, DX))
         ds.setncattr('SizeDY', np.full(NY, DX))
-        ds.setncattr('SizeDZ', np.array(DZ))
+        ds.setncattr('SizeDZ', np.array(dz))
         ds.setncattr('ModelRotation', rotation)
         ds.setncattr('GeorefX', x0)
         ds.setncattr('GeorefY', y0)
@@ -96,7 +101,7 @@ def write_netcdf(path, layout='current', rotation=ROTATION, x0=X0, y0=Y0, latitu
             time.units = 'hours since 2024-07-06 04:00:00'
             time[:] = [0.0, 1.0]
         for name, values in (('GridsI', (np.arange(NX) + 0.5) * DX), ('GridsJ', (np.arange(NY) + 0.5) * DX),
-                             ('GridsK', np.cumsum(DZ) - np.array(DZ) / 2)):
+                             ('GridsK', np.cumsum(dz) - np.array(dz) / 2)):
             v = ds.createVariable(name, 'f4', (name,))
             v.long_name = 'Meters from Lower Left Corner at Cell Midpoint'
             v[:] = values
@@ -213,6 +218,52 @@ def write_edx(folder, base='sim_AT_', stamp='2024-07-06_04.59.59', time_text='04
 """
     path = os.path.join(folder, stem + '.EDX')
     with open(path, 'w', encoding=encoding) as f:     # ENVI-met 6 writes UTF-8, older versions Windows-1252
+        f.write(header)
+    return path
+
+
+SOIL_THICKNESS = [0.02, 0.06, 0.24]        # layer middles at SOIL_DEPTHS, as ENVI-met writes them
+
+
+def write_soil_edx(folder, stamp='2024-07-06_04.59.59', time_text='04.59.59'):
+    """A soil EDX/EDT pair (data_content 3): levels are soil layers, spacing_z their thickness."""
+    os.makedirs(folder, exist_ok=True)
+    stem = f'sim_SO_{stamp}'
+    full = np.stack([np.full((NY, NX), 20.0 - level, dtype=np.float32) for level in range(len(SOIL_THICKNESS))])
+    full[np.newaxis].tofile(os.path.join(folder, stem + '.EDT'))
+    header = f"""<ENVI-MET_Datafile>
+<Header>
+<filetype>EDX ENVI-met Simulation Data Definition</filetype>
+<version>101</version>
+</Header>
+  <datadescription>
+     <data_type> 2 </data_type>
+     <data_content> 3 </data_content>
+     <data_spatial_dim> 3 </data_spatial_dim>
+     <nr_xdata> {NX} </nr_xdata>
+     <nr_ydata> {NY} </nr_ydata>
+     <nr_zdata> {len(SOIL_THICKNESS)} </nr_zdata>
+     <spacing_x> {','.join(f'{DX:.5f}' for _ in range(NX))} </spacing_x>
+     <spacing_y> {','.join(f'{DX:.5f}' for _ in range(NY))} </spacing_y>
+     <spacing_z> {','.join(f'{v:.5f}' for v in SOIL_THICKNESS)} </spacing_z>
+  </datadescription>
+  <variables>
+     <Data_per_variable> 1 </Data_per_variable>
+     <nr_variables> 1 </nr_variables>
+     <name_variables> Temperature (°C) </name_variables>
+  </variables>
+  <modeldescription>
+     <simulation_date> 06.07.2024 </simulation_date>
+     <simulation_time> {time_text} </simulation_time>
+     <model_rotation> {ROTATION} </model_rotation>
+     <location_georef_xy_utmzone> {ZONE} </location_georef_xy_utmzone>
+     <location_georef_x> {X0} </location_georef_x>
+     <location_georef_y> {Y0} </location_georef_y>
+  </modeldescription>
+</ENVI-MET_Datafile>
+"""
+    path = os.path.join(folder, stem + '.EDX')
+    with open(path, 'w', encoding='utf-8') as f:
         f.write(header)
     return path
 

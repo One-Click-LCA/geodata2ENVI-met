@@ -30,6 +30,8 @@ KIND_3D = 'atmosphere'   # GridsK, GridsJ, GridsI
 KIND_2D = 'surface'      # GridsJ, GridsI
 KIND_SOIL = 'soil'       # SoilLevels, GridsJ, GridsI
 
+EDX_CONTENT_SOIL = 3     # <data_content> of EDX soil output (1 atmosphere, 2 surface, ...)
+
 # coordinate variables of the NetCDF files; never offered as data
 NETCDF_COORDINATES = {'Time', 'GridsI', 'GridsJ', 'GridsK', 'SoilLevels', 'crs', 'Lat', 'Lon',
                       'utm_easting', 'utm_northing'}
@@ -452,7 +454,12 @@ class EdxFile(ResultFile):
                          latitude=float(tags.get('location_georef_lat', 0)), dz=spacing_z)
         self.times = [round_to_minute(parse_date_time(tags['simulation_date'], tags['simulation_time']))]
         self.names = [n.strip() for n in tags.get('name_variables', '').split(',')]
-        kind = KIND_3D if self.nz > 1 else KIND_2D
+        self.content = int(float(tags.get('data_content', 0) or 0))
+        self.spacing_z = spacing_z
+        if self.content == EDX_CONTENT_SOIL and self.nz > 1:
+            kind = KIND_SOIL         # levels are soil layers (spacing_z = their thickness), not heights
+        else:
+            kind = KIND_3D if self.nz > 1 else KIND_2D
         self._index = {}
         for index, raw in enumerate(self.names):
             key = raw.split('(', 1)[0].strip()
@@ -501,8 +508,21 @@ class EdxFile(ResultFile):
             return StaticFields(self.dem_offset(), self.grid.dz, objects=objects)
         return StaticFields(np.zeros((self.grid.ny, self.grid.nx), dtype=int), self.grid.dz, air_2d=self._air_2d())
 
+    def soil_depths(self):
+        """Depth (m) of the middle of each soil layer, as the NetCDF output's SoilLevels; None for other files."""
+        if self.content != EDX_CONTENT_SOIL:
+            return None
+        thickness = np.asarray(self.spacing_z, dtype=float)
+        return np.cumsum(thickness) - thickness / 2
+
     def read(self, key, time_index=0, height=0.0):
         index = self._index[key]
+        if self.variables[key].kind == KIND_SOIL:
+            # ``height`` is the depth below the surface, as for NetCDF soil variables
+            depths = self.soil_depths()
+            level = int(np.argmin(np.abs(depths - abs(height))))
+            data = self._read_levels(index, level, level + 1)[0]
+            return _as_float(data[self.core_y, self.core_x]), f'{depths[level]:g}m depth'
         if self.nz > 1:
             k, (bottom, top) = level_for_height(self.grid.dz, height)
             levels = np.clip(self._full_dem_offset() + k, 0, self.nz - 1)

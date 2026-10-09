@@ -164,6 +164,20 @@ class EdxReaderTest(unittest.TestCase):
             self.assertEqual(desc_a, desc_b)
             np.testing.assert_array_equal(a, b)
 
+    def test_soil_files_have_depths_not_heights(self):
+        """EDX soil output (data_content 3): the levels are soil layers, as in the NetCDF's SoilLevels."""
+        soil = self.r.EdxFile(fx.write_soil_edx(os.path.join(self.tmp, 'soil')))
+        self.assertEqual(soil.variables['Temperature'].kind, self.r.KIND_SOIL)
+        np.testing.assert_allclose(soil.soil_depths(), fx.SOIL_DEPTHS)
+        self.assertIsNone(self.r.EdxFile(self.edx).soil_depths())
+        nc = self.r.NetcdfFile(self.nc)
+        self.addCleanup(nc.close)
+        for depth in (0.0, 0.06, 1.0):
+            a, desc_a = soil.read('Temperature', height=depth)
+            b, desc_b = nc.read('SoilTemp', time_index=0, height=depth)
+            self.assertEqual(desc_a, desc_b)
+            np.testing.assert_array_equal(a, b)
+
 
 class FindSourcesTest(unittest.TestCase):
 
@@ -278,6 +292,41 @@ class RealOutputsTest(unittest.TestCase):
             nc_source.close()
             edx_source.close()
         print(f'\n  EDX vs NetCDF checked in {checked} outputs')
+
+    def test_edx_soil_matches_netcdf(self):
+        checked = 0
+        for output in self.outputs:
+            sources = {s.name: s for s in self.r.find_sources(output)}
+            nc_source, edx_source = sources.get('NetCDF'), sources.get('soil (EDX)')
+            if nc_source is None or edx_source is None:
+                continue
+            nc_steps = {t.datetime: t for t in nc_source.timesteps}
+            for step in edx_source.timesteps:
+                # as for the atmosphere: the initialisation step may differ between the two outputs
+                if step.datetime not in nc_steps or step.datetime == nc_source.timesteps[0].datetime:
+                    continue
+                nc_step = nc_steps[step.datetime]
+                nc = nc_source.open(nc_step.path)
+                edx = edx_source.open(step.path)
+                if 'SoilTemp' not in nc.variables or 'Temperature' not in edx.variables:
+                    continue
+                # ENVI-met 5.7 wrote values of about 1 into the NetCDF's SoilTemp (its EDX has ~20 °C)
+                if (nc.model_version() or (99,)) < (5, 8):
+                    continue
+                with self.subTest(output=output, time=step.datetime):
+                    np.testing.assert_allclose(edx.soil_depths(), nc.soil_depths(), atol=1e-5)
+                    # not halfway between two layers: there float rounding picks the layer
+                    for depth in (0.0, 0.27, 1.9):
+                        a, desc_a = edx.read('Temperature', height=depth)
+                        b, desc_b = nc.read('SoilTemp', time_index=nc_step.index, height=depth)
+                        self.assertEqual(desc_a, desc_b)
+                        both = ~np.isnan(a) & ~np.isnan(b)
+                        self.assertLess(np.abs(a[both] - b[both]).max(), 1e-3)
+                checked += 1
+                break
+            nc_source.close()
+            edx_source.close()
+        print(f'\n  soil EDX vs NetCDF checked in {checked} outputs')
 
 
 if __name__ == '__main__':
