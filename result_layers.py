@@ -187,7 +187,8 @@ class ResultLayersTask(QgsTask):
 
     # ---------------------------------------------------------------- main thread
     def finished(self, result):
-        for path, name in self.outputs:
+        # a cancelled task adds none of the layers made so far; the dialog is restored either way
+        for path, name in (self.outputs if result else []):
             layer = QgsRasterLayer(path, name, 'gdal')
             if not layer.isValid():
                 self.errors.append(f'{name}: the layer could not be loaded')

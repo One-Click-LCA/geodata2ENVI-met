@@ -18,11 +18,14 @@ _EXPRESSION = re.compile(
 
 
 def plugin_sources():
-    folders = [PLUGIN_DIR, os.path.join(PLUGIN_DIR, 'core')]
-    for folder in folders:
-        for name in sorted(os.listdir(folder)):
+    """The plugin's own modules: the top folder and every package below it, except the tests."""
+    for root, dirs, files in os.walk(PLUGIN_DIR):
+        dirs[:] = sorted(d for d in dirs if d != 'test' and not d.startswith(('.', '_')))
+        if root != PLUGIN_DIR and '__init__.py' not in files:
+            continue
+        for name in sorted(files):
             if name.endswith('.py') and name != 'resources.py':
-                yield os.path.join(folder, name)
+                yield os.path.join(root, name)
 
 
 class QtApiTest(unittest.TestCase):

@@ -134,6 +134,20 @@ class ResultsTabTest(unittest.TestCase):
         # bilinear 1 m pixels: their centres are up to 0.5 m from the cell midpoint (field: 5 K/m along j)
         self.assertAlmostEqual(sample(path, east[2, 2], north[2, 2]), fx.t_value(1, 2, 2, 2), delta=3.0)
 
+    def test_cancelled_task_adds_no_layers(self):
+        from qgis.core import QgsProject
+        self.load(self.root)
+        self.choose_variable('Air Temperature [T] (Only Series A)')
+        self.check(self.plugin.dlg.lw_SeriesA, [0, 1])
+        done = []
+        task = import_plugin_module('result_layers').ResultLayersTask(
+            self.plugin.layer_requests(), on_finished=lambda t: done.append(t))
+        self.assertTrue(task.run())
+        self.assertEqual(len(task.outputs), 2)
+        task.finished(False)                    # what QGIS calls when the task was cancelled
+        self.assertEqual((task.layers, done), ([], [task]))
+        self.assertEqual(QgsProject.instance().count(), 0)
+
     def test_delta_on_the_same_grid_is_exact(self):
         # NetCDF (A) against the EDX files of the same run (B): matched by long name
         self.load(self.root, 'NetCDF', self.root, 'atmosphere (EDX)')

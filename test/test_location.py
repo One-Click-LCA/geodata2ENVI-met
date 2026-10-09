@@ -56,6 +56,7 @@ class LocationTest(unittest.TestCase):
 
     def test_elevation(self):
         self.assertEqual(self.location.elevation(48.0, 11.6, FakeRequests({'srtm1': 520})), 520)
+        self.assertEqual(self.location.elevation(52.3, 4.6, FakeRequests({'srtm1': -4})), -4)   # below sea level
         self.assertIsNone(self.location.elevation(54.0, 5.0, FakeRequests({'srtm1': -32768})))
         self.assertIsNone(self.location.elevation(1.0, 1.0, FakeRequests(error=TimeoutError())))
 

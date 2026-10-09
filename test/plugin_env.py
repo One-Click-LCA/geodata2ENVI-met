@@ -49,7 +49,8 @@ def start_qgis():
     global _QGIS_APP
     if _QGIS_APP is not None:
         return _QGIS_APP
-    os.environ.setdefault('QGIS_CUSTOM_CONFIG_PATH', tempfile.mkdtemp(prefix='g2e_test_profile_'))
+    # always a fresh profile, also when the shell has one set: tests must never touch a real profile
+    os.environ['QGIS_CUSTOM_CONFIG_PATH'] = tempfile.mkdtemp(prefix='g2e_test_profile_')
     os.chdir(tempfile.mkdtemp(prefix='g2e_test_cwd_'))
     from qgis.core import QgsApplication
     _QGIS_APP = QgsApplication([], True)

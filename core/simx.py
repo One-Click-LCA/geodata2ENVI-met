@@ -238,7 +238,8 @@ def _xml_value(section, key, value):
         return '1' if value else '0'
     if kind == FLOATS or isinstance(value, (list, tuple)):
         return ','.join(f'{float(v):.5f}' for v in value)
-    return str(value)
+    # ENVI-met's XML is read tag by tag without entities: its own writer turns < and > into [ and ]
+    return str(value).replace('<', '[').replace('>', ']')
 
 
 def write_xml(path, simulation, revision_date=''):

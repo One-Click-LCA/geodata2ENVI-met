@@ -119,6 +119,14 @@ class SimxFileTest(_TempDir):
         self.assertIn('<UseTThread_CallMain> 0 </UseTThread_CallMain>', text)
         self.assertIn('<revisiondate>07.10.2026 12:00:00</revisiondate>', text)
 
+    def test_xml_values_cannot_open_tags(self):
+        """ENVI-met reads its XML tag by tag, without entities; its writer turns < > into [ ]."""
+        simx = core_simx()
+        path = simx.write_xml(self.path('names.simx'), {'mainData': {'simName': 'A & B <new>'}})
+        with open(path, encoding='utf-8') as f:
+            self.assertIn('<simName> A & B [new] </simName>', f.read())
+        self.assertEqual(simx.read(path)[0]['mainData']['simName'], 'A & B [new]')
+
     def test_reads_old_plugin_xml(self):
         """Older plugin versions wrote CPUdemand; ENVI-met reads either spelling."""
         path = self.path('old.simx', '<ENVI-MET_Datafile>\n<Header>\n<filetype>SIMX</filetype>\n</Header>\n'

@@ -41,11 +41,14 @@ def standard_time_offset(lat, lon, requests_module=None):
     return float(round(lon / 15.0)), reason
 
 
+SRTM_NO_DATA = -32768     # GeoNames' value for the sea and for gaps in SRTM
+
+
 def elevation(lat, lon, requests_module=None):
-    """Ground elevation (m) from SRTM, or None (sea, no answer)."""
+    """Ground elevation (m) from SRTM, or None (sea, no answer). Land below sea level is negative."""
     try:
         data = _get('srtm1JSON', lat, lon, requests_module)
-        if data is not None and 'srtm1' in data and int(data['srtm1']) >= 0:
+        if data is not None and 'srtm1' in data and int(data['srtm1']) != SRTM_NO_DATA:
             return int(data['srtm1'])
     except Exception:
         pass
