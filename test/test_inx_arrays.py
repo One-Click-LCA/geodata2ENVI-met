@@ -37,10 +37,6 @@ class InxArraysTest(unittest.TestCase):
         self.assertEqual(mask.sum(axis=1).tolist(), [10, 10, 4, 4, 4, 4, 10, 10])
         self.assertEqual(mask.sum(axis=0).tolist(), [8, 8, 4, 4, 4, 4, 4, 4, 8, 8])
 
-    def test_matrix_text(self):
-        self.assertEqual(self.a.matrix_text(np.array([[1, 0], [12, 3]])), '     1,0\n     12,3')
-        self.assertEqual(self.a.matrix_text(np.array([['0100ST', 'NULL']]), indent=''), '0100ST,')
-
 
 if __name__ == '__main__':
     unittest.main()

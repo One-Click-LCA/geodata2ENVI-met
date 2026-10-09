@@ -1,18 +1,19 @@
 # coding=utf-8
 """INX export of a full scenario against a reference file, and the export's robustness.
 
-test/data/inx_scenario_golden.INX was written before the export was reworked for speed
-and robustness; the rework must not change the result.
+test/data/inx_scenario_golden.INX was written (in the older XML format) before the export was
+reworked for speed and robustness; the rework and the JSON format must not change the result.
+Comparing the two also tests that core.inx reads both formats alike.
 """
 
+import json
 import os
-import re
 import shutil
 import tempfile
 import unittest
 
 from . import inx_scenario
-from .inx_helpers import read_inx
+from .inx_helpers import grid_text, read_inx
 from .plugin_env import DATA_DIR, start_qgis
 
 GOLDEN = os.path.join(DATA_DIR, 'inx_scenario_golden.INX')
@@ -20,20 +21,13 @@ GOLDEN = os.path.join(DATA_DIR, 'inx_scenario_golden.INX')
 # Matrices compared with a tolerance. The terrain heights are whole metres, cut off from
 # the DEM interpolated by GDAL; GDAL versions differ by millimetres, which moves a cell
 # lying just above a whole metre (5.002 m here) by one metre.
-TOLERANT = {'terrainheight': 1}
+TOLERANT = {'terrain': 1}
 
 
-def matrices(text):
-    """Every matrix of an INX file, by tag (also when its closing tag is missing)."""
-    found = {}
-    for match in re.finditer(r'<([A-Za-z0-9_]+) type="matrix-data"[^>]*>([^<]*)<', text):
-        found[match.group(1)] = [line.strip().rstrip(',') for line in match.group(2).strip().splitlines()]
-    return found
-
-
-def comparable(text):
-    """The INX without the free-text remark."""
-    return re.sub(r'<remark>.*?</remark>', '', text)
+def matrices(path):
+    """Every grid of an INX file (either format) as rows of comma-separated text, north first."""
+    return {name: [','.join(row) for row in grid_text(values)]
+            for name, values in read_inx(path)['model']['grids'].items()}
 
 
 class InxScenarioTest(unittest.TestCase):
@@ -43,17 +37,13 @@ class InxScenarioTest(unittest.TestCase):
         start_qgis()
         cls.tmp = tempfile.mkdtemp(prefix='g2e_scenario_')
         cls.path = inx_scenario.export(cls.tmp, 'scenario')
-        with open(cls.path, encoding='utf-8') as f:
-            cls.text = f.read()
-        with open(GOLDEN, encoding='utf-8') as f:
-            cls.golden = f.read()
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def test_matrices_match_the_reference(self):
-        new, old = matrices(self.text), matrices(self.golden)
+        new, old = matrices(self.path), matrices(GOLDEN)
         self.assertEqual(sorted(new), sorted(old))
         for tag in old:
             with self.subTest(matrix=tag):
@@ -74,18 +64,35 @@ class InxScenarioTest(unittest.TestCase):
         new, old = read_inx(self.path), read_inx(GOLDEN)
         self.assertEqual(new['receptors'], old['receptors'])
         self.assertEqual(new['plants3d'], old['plants3d'])
-        for tag in ('modelRotation', 'realworldLowerLeft_X', 'realworldLowerLeft_Y', 'UTMZone', 'grids-I', 'grids-J'):
-            with self.subTest(tag=tag):
-                pattern = r'<%s>\s*(.*?)\s*</%s>' % (tag, tag)
-                self.assertAlmostEqual(float(re.search(pattern, self.text).group(1)),
-                                       float(re.search(pattern, self.golden).group(1)), places=6)
+        for section, key in (('location', 'modelRot'), ('location', 'x'), ('location', 'y'), ('geometry', 'i'),
+                             ('geometry', 'j')):
+            with self.subTest(key=key):
+                self.assertAlmostEqual(float(new['model'][section][key]), float(old['model'][section][key]), places=6)
+        self.assertEqual(new['model']['location']['epsgProj'], old['model']['location']['epsgProj'])
+
+    def test_written_as_envi_met_6_json(self):
+        with open(self.path, 'rb') as f:
+            raw = f.read()
+        self.assertTrue(raw.startswith(b'\xef\xbb\xbf{'))          # UTF-8 with BOM, as SPACES writes it
+        data = json.loads(raw.decode('utf-8-sig'))['envimetDatafile']
+        self.assertEqual((data['header']['fileType'], data['header']['version']), ('modelAreaJSON', 1))
+        geometry = data['domainConfig']['modelGeometry']
+        self.assertEqual(geometry['modelType'], '2.5D')
+        top = data['spatialData2D']['buildings']['top']
+        # [i][j], j from south: as many columns as cells along x, each as long as the model is along y
+        self.assertEqual((len(top), len(top[0])), (geometry['i'], geometry['j']))
+        self.assertTrue(all(isinstance(v, int) for row in top for v in row))
+        self.assertTrue(all(isinstance(v, bool) for row in data['spatialData2D']['buildings']['fixedHeight']
+                            for v in row))
+        self.assertTrue(all(len(v) == 6 for row in data['spatialData2D']['soilProfiles']['data'] for v in row))
+        north_up = read_inx(self.path)['model']['grids']['top']
+        self.assertEqual(top[0][0], north_up[-1, 0])              # south-west cell
+        self.assertEqual(top[-1][-1], north_up[0, -1])            # north-east cell
 
     def test_a_far_away_feature_does_not_move_the_layer(self):
         """H7: each layer was projected to the UTM zone of its own extent's corner."""
         path = inx_scenario.export(self.tmp, 'far', far_feature=True)
-        with open(path, encoding='utf-8') as f:
-            text = f.read()
-        self.assertEqual(matrices(text)['zTop'], matrices(self.golden)['zTop'])
+        self.assertEqual(matrices(path)['top'], matrices(GOLDEN)['top'])
 
 
 if __name__ == '__main__':

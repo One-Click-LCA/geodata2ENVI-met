@@ -1,4 +1,4 @@
-"""Per-building indoor climate of ENVI-met 6 (the <Buildinginfo> tags of the INX).
+"""Per-building indoor climate of ENVI-met 6 (the buildingInfo entries of the INX).
 
 A building without a value takes the model-wide setting of the simulation (SIMX):
 building use 0, indoor mode -1 and thresholds -99 mean "not stated". The internal
@@ -109,17 +109,16 @@ def internal_gain(value):
 
 PARSERS = {'use': building_use, 'mode': indoor_mode, 'lower': threshold, 'upper': threshold, 'gain': internal_gain}
 
-TAGS = (('use', 'BuildingUse'), ('mode', 'BuildingIndoorMode'), ('lower', 'BuildingIndoorLower'),
-        ('upper', 'BuildingIndoorUpper'), ('gain', 'BuildingInternalGain'))
+# setting -> key of a building in the model area (core.inx)
+KEYS = (('use', 'buildingUse'), ('mode', 'indoorMode'), ('lower', 'indoorLowerC'), ('upper', 'indoorUpperC'),
+        ('gain', 'internalGainWm2'))
 
 
-def tag_lines(settings, suppress_ac_heat=False, indent='    '):
-    """The INX lines of one building's indoor climate. ``settings`` maps use/mode/lower/upper/gain to values."""
-    values = {key: PARSERS[key](settings.get(key))[0] for key, _ in TAGS}
-    lines = []
-    for key, tag in TAGS:
-        value = values[key]
-        text = str(int(value)) if key in ('use', 'mode') else f'{float(value):.2f}'
-        lines.append(f'{indent}<{tag}> {text} </{tag}>')
-    lines.append(f'{indent}<BuildingSuppressACHeat> {1 if suppress_ac_heat else 0} </BuildingSuppressACHeat>')
-    return lines
+def building_values(settings, suppress_ac_heat=False):
+    """One building's indoor climate as INX values. ``settings`` maps use/mode/lower/upper/gain to values."""
+    values = {}
+    for key, name in KEYS:
+        value = PARSERS[key](settings.get(key))[0]
+        values[name] = int(value) if key in ('use', 'mode') else round(float(value), 2)
+    values['suppressACHeatRelease'] = bool(suppress_ac_heat)
+    return values

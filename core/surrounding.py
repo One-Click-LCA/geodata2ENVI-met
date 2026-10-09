@@ -1,4 +1,4 @@
-"""The surrounding area of ENVI-met 6 (the <SurroundingArea> section of the INX).
+"""The surrounding area of ENVI-met 6 (the surroundingArea section of the INX).
 
 ENVI-met 6 describes the land outside each of the four model borders by one of 27
 urban or land-cover types. The INX stores their position in this list; older
@@ -53,13 +53,12 @@ def border_labels(rotation=None):
     return {border: f'{border} border (faces {compass(bearings[border])}):' for border in BORDERS}
 
 
-def section_lines(use, borders, indent='    '):
-    """The INX lines of the section. ``borders`` maps Left/Right/Front/Rear to a type index."""
-    lines = ['  <SurroundingArea>', f'{indent}<useSurroundingArea> {1 if use else 0} </useSurroundingArea>']
+def section(use, borders):
+    """The INX surroundingArea values. ``borders`` maps Left/Right/Front/Rear to a type index."""
+    values = {'useSurroundingArea': bool(use)}
     for border in BORDERS:
         index = int(borders.get(border, DEFAULT_TYPE))
         if not 0 <= index < len(TYPES):
             index = DEFAULT_TYPE
-        lines.append(f'{indent}<border{border}> {index} </border{border}>')
-    lines.append('  </SurroundingArea>')
-    return lines
+        values[f'border{border}'] = index
+    return values

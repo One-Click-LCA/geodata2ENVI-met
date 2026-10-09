@@ -1,7 +1,7 @@
 """Array helpers of the INX export (no QGIS imports).
 
 Gridded layers are north-up arrays with shape (rows, columns): row 0 is the
-northernmost row and becomes the first line of every INX matrix.
+northernmost row (core.inx turns them into the [i][j] grids of the INX).
 """
 
 import numpy as np
@@ -59,11 +59,3 @@ def border_mask(shape, width):
     j = np.arange(columns)[None, :]
     return (i < width) | (j < width) | (i >= rows - width) | (j >= columns - width)
 
-
-def matrix_text(values, indent='     '):
-    """INX matrix text: one line per row, comma-separated, as SPACES writes it ('NULL' becomes empty)."""
-    lines = []
-    for row in np.asarray(values):
-        cells = ('' if v == 'NULL' else v for v in (str(x) for x in row))
-        lines.append(indent + ','.join(cells))
-    return '\n'.join(lines)

@@ -1,8 +1,6 @@
 # coding=utf-8
 """Build small synthetic GIS layers, export them with the Worker and read the INX back."""
 
-import re
-
 from .plugin_env import import_plugin_module, start_qgis
 
 
@@ -85,35 +83,25 @@ def set_plants3d(worker, layer, id_field):
     worker.plant3dAddOut_disabled = True
 
 
+def grid_text(values):
+    """A grid of the model area as rows of text, north first, as the XML matrices print it."""
+    return [['1' if v is True else '0' if v is False else str(v) for v in row] for row in values.tolist()]
+
+
 def read_inx(path):
-    """The parts of an INX file the tests look at."""
-    with open(path, encoding='utf-8') as f:
+    """The parts of an INX file (either format, core.inx) the tests look at."""
+    inx = import_plugin_module('core.inx')
+    model = inx.read(path)
+    with open(path, encoding='utf-8-sig') as f:
         text = f.read()
-
-    def scalar(tag):
-        m = re.search(r'<%s>\s*(.*?)\s*</%s>' % (tag, tag), text)
-        return m.group(1) if m else None
-
-    def matrix(tag):
-        m = re.search(r'<%s type="matrix-data"[^>]*>(.*?)</%s>' % (tag, tag), text, re.S)
-        if m is None:
-            return None
-        lines = [line.strip().rstrip(',') for line in m.group(1).strip().splitlines() if line.strip()]
-        return [line.split(',') for line in lines]
-
-    receptors = {name: (int(i), int(j)) for i, j, name in re.findall(
-        r'<Receptors>\s*<cell_i>\s*(-?\d+)\s*</cell_i>\s*<cell_j>\s*(-?\d+)\s*</cell_j>\s*'
-        r'<name>\s*(.*?)\s*</name>', text)}
-    plants = [(int(i), int(j), plant_id) for i, j, plant_id in re.findall(
-        r'<3Dplants>\s*<rootcell_i>\s*(-?\d+)\s*</rootcell_i>\s*<rootcell_j>\s*(-?\d+)\s*</rootcell_j>\s*'
-        r'<rootcell_k>\s*-?\d+\s*</rootcell_k>\s*<plantID>\s*(.*?)\s*</plantID>', text)]
     return {
-        'II': int(scalar('grids-I')),
-        'JJ': int(scalar('grids-J')),
-        'zTop': matrix('zTop'),
-        'fixedheight': matrix('fixedheight'),
-        'soil': matrix('ID_soilprofile'),
-        'receptors': receptors,
-        'plants3d': plants,
+        'model': model,
+        'II': model['geometry']['i'],
+        'JJ': model['geometry']['j'],
+        'zTop': grid_text(model['grids']['top']),
+        'fixedheight': grid_text(model['grids']['fixedHeight']),
+        'soil': grid_text(model['grids']['soilProfiles']),
+        'receptors': {r['name']: (r['i'], r['j']) for r in model['receptors']},
+        'plants3d': [(p['i'], p['j'], p['id']) for p in model['plants3d']],
         'text': text,
     }

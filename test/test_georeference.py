@@ -14,7 +14,7 @@ import shutil
 import tempfile
 import unittest
 
-from .inx_helpers import make_layer, new_worker
+from .inx_helpers import make_layer, new_worker, read_inx
 from .plugin_env import import_plugin_module, start_qgis
 
 CASES = [
@@ -58,14 +58,13 @@ class GeoreferenceTest(unittest.TestCase):
         path = os.path.join(self.tmp, name + '.INX')
         worker = new_worker(sub_area, dx=DX, dy=DX, filename=path)
         worker.saveINX()
-        with open(path, encoding='utf-8') as f:
-            text = f.read()
-
-        def value(tag):
-            return re.search(r'<%s>\s*(.*?)\s*</%s>' % (tag, tag), text).group(1)
-        return {tag: value(tag) for tag in ('grids-I', 'grids-J', 'modelRotation', 'realworldLowerLeft_X',
-                                            'realworldLowerLeft_Y', 'location_Latitude', 'UTMZone',
-                                            'projectionSystem')}
+        model = read_inx(path)['model']
+        location = model['location']
+        # JSON has no UTM zone: it follows from the projected CRS (EPSG 326zz north, 327zz south)
+        return {'grids-I': model['geometry']['i'], 'grids-J': model['geometry']['j'],
+                'modelRotation': location['modelRot'], 'realworldLowerLeft_X': location['x'],
+                'realworldLowerLeft_Y': location['y'], 'location_Latitude': location['lat'],
+                'UTMZone': int(location['epsgProj'].split(':')[1]) % 100, 'projectionSystem': location['epsgProj']}
 
     def test_exported_area_matches_the_digitised_rectangle(self):
         for epsg, (x0, y0), sign in CASES:

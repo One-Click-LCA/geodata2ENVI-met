@@ -2,13 +2,12 @@
 """ENVI-met 6 additions to the INX export: indoor climate per building and the surrounding area."""
 
 import os
-import re
 import shutil
 import tempfile
 import unittest
 
 from . import inx_scenario
-from .inx_helpers import make_layer, new_worker, rectangle_wkt, set_buildings
+from .inx_helpers import make_layer, new_worker, read_inx, rectangle_wkt, set_buildings
 from .plugin_env import import_plugin_module, make_plugin, start_qgis
 
 CRS = 'EPSG:32632'
@@ -16,18 +15,7 @@ X0, Y0 = 500000.0, 5400000.0
 DX = 2.0
 
 
-def building_tags(text):
-    """{building number: {tag: value}} of the <Buildinginfo> sections."""
-    found = {}
-    for block in re.findall(r'<Buildinginfo>(.*?)</Buildinginfo>', text, re.S):
-        tags = dict(re.findall(r'<(\w+)>\s*(.*?)\s*</\1>', block))
-        found[int(tags['BuildingInternalNr'])] = tags
-    return found
-
-
-def section(text, name):
-    match = re.search(r'<%s>(.*?)</%s>' % (name, name), text, re.S)
-    return dict(re.findall(r'<(\w+)>\s*(.*?)\s*</\1>', match.group(1))) if match else None
+INDOOR = ('buildingUse', 'indoorMode', 'indoorLowerC', 'indoorUpperC', 'internalGainWm2', 'suppressACHeatRelease')
 
 
 class IndoorValuesTest(unittest.TestCase):
@@ -74,14 +62,10 @@ class IndoorValuesTest(unittest.TestCase):
         self.assertEqual(self.indoor.internal_gain('12'), (12.0, True))
         self.assertEqual(self.indoor.internal_gain(-1), (8.0, False))
 
-    def test_tag_lines_default_to_not_stated(self):
-        self.assertEqual(self.indoor.tag_lines({}), [
-            '    <BuildingUse> 0 </BuildingUse>',
-            '    <BuildingIndoorMode> -1 </BuildingIndoorMode>',
-            '    <BuildingIndoorLower> -99.00 </BuildingIndoorLower>',
-            '    <BuildingIndoorUpper> -99.00 </BuildingIndoorUpper>',
-            '    <BuildingInternalGain> 8.00 </BuildingInternalGain>',
-            '    <BuildingSuppressACHeat> 0 </BuildingSuppressACHeat>'])
+    def test_building_values_default_to_not_stated(self):
+        self.assertEqual(self.indoor.building_values({}), {
+            'buildingUse': 0, 'indoorMode': -1, 'indoorLowerC': -99.0, 'indoorUpperC': -99.0,
+            'internalGainWm2': 8.0, 'suppressACHeatRelease': False})
 
 
 class SurroundingAreaTest(unittest.TestCase):
@@ -113,12 +97,10 @@ class SurroundingAreaTest(unittest.TestCase):
         self.assertAlmostEqual(self.s.rotation_from_bearing(90.0), 0.0)
         self.assertAlmostEqual(self.s.rotation_from_bearing(280.0), -170.0)
 
-    def test_section_lines(self):
-        lines = self.s.section_lines(False, {'Left': 0, 'Right': 26, 'Front': 99})
-        self.assertEqual(lines, ['  <SurroundingArea>', '    <useSurroundingArea> 0 </useSurroundingArea>',
-                                 '    <borderLeft> 0 </borderLeft>', '    <borderRight> 26 </borderRight>',
-                                 '    <borderFront> 1 </borderFront>', '    <borderRear> 1 </borderRear>',
-                                 '  </SurroundingArea>'])
+    def test_section(self):
+        self.assertEqual(self.s.section(False, {'Left': 0, 'Right': 26, 'Front': 99}),
+                         {'useSurroundingArea': False, 'borderLeft': 0, 'borderRight': 26, 'borderFront': 1,
+                          'borderRear': 1})
 
 
 class InxExportV6Test(unittest.TestCase):
@@ -140,8 +122,7 @@ class InxExportV6Test(unittest.TestCase):
         worker = new_worker(sub_area, dx=DX, dy=DX, filename=path)
         configure(worker)
         worker.saveINX()
-        with open(path, encoding='utf-8') as f:
-            return f.read(), worker
+        return read_inx(path)['model'], worker
 
     def buildings(self):
         return make_layer('Polygon', CRS, [
@@ -150,19 +131,13 @@ class InxExportV6Test(unittest.TestCase):
         ], fields=[('h', self.INT), ('use', self.STR), ('lower', self.DOUBLE)])
 
     def test_defaults(self):
-        text, worker = self.export('defaults', lambda w: set_buildings(w, self.buildings(), 'h'))
-        tags = building_tags(text)
-        self.assertEqual(len(tags), 2)
-        for values in tags.values():
-            self.assertEqual((values['BuildingUse'], values['BuildingIndoorMode'], values['BuildingIndoorLower'],
-                              values['BuildingIndoorUpper'], values['BuildingInternalGain'],
-                              values['BuildingSuppressACHeat']), ('0', '-1', '-99.00', '-99.00', '8.00', '0'))
-        self.assertEqual(section(text, 'SurroundingArea'),
-                         {'useSurroundingArea': '1', 'borderLeft': '1', 'borderRight': '1', 'borderFront': '1',
-                          'borderRear': '1'})
-        # the section sits between nestingArea and locationData, as SPACES writes it
-        self.assertLess(text.index('</nestingArea>'), text.index('<SurroundingArea>'))
-        self.assertLess(text.index('</SurroundingArea>'), text.index('<locationData>'))
+        model, worker = self.export('defaults', lambda w: set_buildings(w, self.buildings(), 'h'))
+        self.assertEqual(len(model['buildings']), 2)
+        for building in model['buildings']:
+            self.assertEqual(tuple(building[key] for key in INDOOR), (0, -1, -99.0, -99.0, 8.0, False))
+        self.assertEqual(model['surrounding'],
+                         {'useSurroundingArea': True, 'borderLeft': 1, 'borderRight': 1, 'borderFront': 1,
+                          'borderRear': 1})
         self.assertEqual(worker.warnings, [])
 
     def test_fields_and_static_values(self):
@@ -173,18 +148,16 @@ class InxExportV6Test(unittest.TestCase):
             worker.useSurroundingArea = False
             worker.surroundingBorders = {'Left': 0, 'Right': 5, 'Front': 26, 'Rear': 17}
 
-        text, worker = self.export('values', configure)
-        tags = sorted(building_tags(text).values(), key=lambda t: t['BuildingUse'], reverse=True)
-        office, castle = tags
-        self.assertEqual((office['BuildingUse'], office['BuildingIndoorLower']), ('2', '21.50'))
-        self.assertEqual((castle['BuildingUse'], castle['BuildingIndoorLower']), ('0', '-99.00'))
-        for values in tags:
-            self.assertEqual((values['BuildingIndoorMode'], values['BuildingIndoorUpper'],
-                              values['BuildingInternalGain'], values['BuildingSuppressACHeat']),
-                             ('3', '-99.00', '12.00', '1'))
-        self.assertEqual(section(text, 'SurroundingArea'),
-                         {'useSurroundingArea': '0', 'borderLeft': '0', 'borderRight': '5', 'borderFront': '26',
-                          'borderRear': '17'})
+        model, worker = self.export('values', configure)
+        office, castle = sorted(model['buildings'], key=lambda b: b['buildingUse'], reverse=True)
+        self.assertEqual((office['buildingUse'], office['indoorLowerC']), (2, 21.5))
+        self.assertEqual((castle['buildingUse'], castle['indoorLowerC']), (0, -99.0))
+        for building in (office, castle):
+            self.assertEqual((building['indoorMode'], building['indoorUpperC'], building['internalGainWm2'],
+                              building['suppressACHeatRelease']), (3, -99.0, 12.0, True))
+        self.assertEqual(model['surrounding'],
+                         {'useSurroundingArea': False, 'borderLeft': 0, 'borderRight': 5, 'borderFront': 26,
+                          'borderRear': 17})
         self.assertEqual(len(worker.warnings), 1)
         self.assertIn("field 'use'", worker.warnings[0])
         self.assertIn("'castle'", worker.warnings[0])
